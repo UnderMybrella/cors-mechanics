@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.0.0"
+version = "1.0.1"
 
 repositories {
     mavenCentral()
@@ -87,12 +87,12 @@ tasks.create<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfil
     group = "docker"
 
     destFile = File(rootProject.buildDir, "docker/Dockerfile")
-    from("openjdk:8-jre-alpine")
+    from("azul/zulu-openjdk-alpine:11-jre")
     maintainer("UnderMybrella \"undermybrella@abimon.org\"")
     copyFile(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFileName.get(), "/app/cors-mechanics.jar")
     copyFile("application.conf", "/app/application.conf")
     entryPoint("java")
-    defaultCommand("-jar", "/app/cors-mechanics.jar", "-config=application.conf")
+    defaultCommand("-jar", "/app/cors-mechanics.jar", "-config=/app/application.conf")
     exposePort(8786)
     runCommand("apk --update --no-cache add curl")
     instruction("HEALTHCHECK CMD curl -f http://localhost:8786/health || exit 1")
@@ -109,3 +109,11 @@ tasks.create<Sync>("syncShadowJarArchive") {
 tasks.named("createDockerfile") {
     dependsOn(":syncShadowJarArchive")
 }
+
+//tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImage") {
+//    group = "docker"
+//
+//    dependsOn("createDockerfile")
+//    inputDir = tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.parentFile
+//    tag = "undermybrella/cors-mechanics:$version"
+//}
