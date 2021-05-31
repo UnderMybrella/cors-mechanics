@@ -7,7 +7,7 @@ plugins {
     application
 
 //    id("com.palantir.graal") version "0.7.2"
-    id("com.bmuschko.docker-remote-api") version "3.2.3"
+    id("com.bmuschko.docker-java-application") version "7.0.0"
 }
 
 group = "dev.brella"
@@ -83,12 +83,17 @@ tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
     mergeServiceFiles()
 }
 
+/*
 tasks.create<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile") {
     group = "docker"
 
-    destFile = File(rootProject.buildDir, "docker/Dockerfile")
+    destFile.set(File(rootProject.buildDir, "docker/Dockerfile"))
     from("azul/zulu-openjdk-alpine:11-jre")
-    maintainer("UnderMybrella \"undermybrella@abimon.org\"")
+    label(
+        mapOf(
+            "org.opencontainers.image.authors" to "UnderMybrella \"undermybrella@abimon.org\""
+        )
+    )
     copyFile(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFileName.get(), "/app/cors-mechanics.jar")
     copyFile("application.conf", "/app/application.conf")
     entryPoint("java")
@@ -103,17 +108,37 @@ tasks.create<Sync>("syncShadowJarArchive") {
 
     dependsOn("assemble")
     from(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFile.get().asFile, "application.conf")
-    into(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.parentFile)
+    into(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
 }
 
 tasks.named("createDockerfile") {
     dependsOn(":syncShadowJarArchive")
 }
 
-//tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImage") {
-//    group = "docker"
-//
-//    dependsOn("createDockerfile")
-//    inputDir = tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.parentFile
-//    tag = "undermybrella/cors-mechanics:$version"
-//}
+tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImage") {
+    group = "docker"
+
+    dependsOn("createDockerfile")
+    inputDir.set(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
+
+    tag = "undermybrella/cors-mechanics:$version"
+}*/
+
+
+docker {
+    javaApplication {
+        baseImage.set("azul/zulu-openjdk-alpine:11-jre")
+        maintainer.set("UnderMybrella \"docker@brella.dev\"")
+        ports.set(listOf(8786))
+        images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:latest")
+        jvmArgs.addAll("-config=/app/application.conf")
+    }
+}
+
+tasks.named<Sync>("dockerSyncBuildContext") {
+    from("application.conf")
+}
+
+tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("dockerCreateDockerfile") {
+    copyFile("application.conf", "/app/application.conf")
+}

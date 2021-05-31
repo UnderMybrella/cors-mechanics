@@ -306,9 +306,10 @@ fun Application.module(testing: Boolean = false) {
     setupConvenienceRoutes(http, streamData, liveDataJsonString)
 
     routing {
-        get("/healthy") {
+        get("/health") {
             call.respond(HttpStatusCode.OK, EmptyContent)
         }
+
         route("/{host}") {
             get("/{route...}") {
                 call.respondProxied(
