@@ -7,11 +7,12 @@ plugins {
     application
 
 //    id("com.palantir.graal") version "0.7.2"
-    id("com.bmuschko.docker-java-application") version "7.0.0"
+//    id("com.bmuschko.docker-java-application") version "7.0.0"
+    id("com.bmuschko.docker-remote-api") version "7.0.0"
 }
 
 group = "dev.brella"
-version = "1.0.1"
+version = "1.0.2"
 
 repositories {
     mavenCentral()
@@ -55,7 +56,7 @@ tasks.test {
 }
 
 tasks.withType<KotlinCompile>() {
-    kotlinOptions.jvmTarget = "1.8"
+    kotlinOptions.jvmTarget = "11"
 }
 
 //graal {
@@ -83,7 +84,6 @@ tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
     mergeServiceFiles()
 }
 
-/*
 tasks.create<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile") {
     group = "docker"
 
@@ -121,10 +121,11 @@ tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImag
     dependsOn("createDockerfile")
     inputDir.set(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
 
-    tag = "undermybrella/cors-mechanics:$version"
-}*/
+    images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:latest")
+}
 
 
+/*
 docker {
     javaApplication {
         baseImage.set("azul/zulu-openjdk-alpine:11-jre")
@@ -141,4 +142,4 @@ tasks.named<Sync>("dockerSyncBuildContext") {
 
 tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("dockerCreateDockerfile") {
     copyFile("application.conf", "/app/application.conf")
-}
+}*/
