@@ -228,7 +228,14 @@ sealed class JsonExplorerOperation {
 inline fun <reified T : Any> Route.withJsonExplorer(route: String, encoder: Json = json, crossinline getJson: suspend ApplicationCall.() -> T) {
     route(route) {
         get("/") {
-            call.respond(call.getJson())
+            val json = call.getJson()
+            try {
+                call.respond(call.getJson())
+            } catch (th: Throwable) {
+                System.err.println("Error on encoding $json")
+                th.printStackTrace()
+                throw th
+            }
         }
 
         jsonExplorer {
@@ -288,6 +295,14 @@ inline fun Route.jsonExplorer(crossinline getJson: suspend ApplicationCall.() ->
             }
         }
 
-        json?.let { call.respond(it) } ?: call.respond(EmptyContent)
+        json?.let {
+            try {
+                call.respond(it)
+            } catch (th: Throwable) {
+                System.err.println("Error on encoding with path $jsonPath: $json")
+                th.printStackTrace()
+                throw th
+            }
+        } ?: call.respond(EmptyContent)
     }
 }

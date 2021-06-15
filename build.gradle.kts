@@ -22,7 +22,7 @@ repositories {
 dependencies {
     testImplementation(kotlin("test-junit"))
 
-    val ktor_version = "1.5.4"
+    val ktor_version = "1.6.0"
 
     implementation("io.ktor:ktor-server-netty:$ktor_version")
     implementation("io.ktor:ktor-serialization:$ktor_version")
