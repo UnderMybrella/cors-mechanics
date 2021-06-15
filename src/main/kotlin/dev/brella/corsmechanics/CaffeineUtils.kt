@@ -35,7 +35,14 @@ inline fun <K, V> Caffeine<Any, Any>.buildKotlin(): KotlinCache<K, V> = build()
 inline fun <K, V> Caffeine<Any, Any>.buildCoroutines(scope: CoroutineScope = CorsMechanics, context: CoroutineContext = scope.coroutineContext, crossinline loader: suspend (key: K) -> V) =
     buildAsync<K, V> { key, executor ->
         DISPATCHER_CACHE[executor].thenCompose { dispatcher ->
-            scope.future(context + dispatcher) { loader(key) }
+            scope.future(context + dispatcher) {
+                try {
+                    loader(key)
+                } catch (th: Throwable) {
+                    th.printStackTrace()
+                    throw th
+                }
+            }
         }
     }
 

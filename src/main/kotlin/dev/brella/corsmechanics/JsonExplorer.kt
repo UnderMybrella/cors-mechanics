@@ -231,7 +231,16 @@ inline fun <reified T : Any> Route.withJsonExplorer(route: String, encoder: Json
             call.respond(call.getJson())
         }
 
-        jsonExplorer { encoder.encodeToJsonElement(getJson()) }
+        jsonExplorer {
+            val json = getJson()
+            try {
+                encoder.encodeToJsonElement(json)
+            } catch (th: Throwable) {
+                System.err.println("Error on encoding $json")
+                th.printStackTrace()
+                throw th
+            }
+        }
     }
 }
 
