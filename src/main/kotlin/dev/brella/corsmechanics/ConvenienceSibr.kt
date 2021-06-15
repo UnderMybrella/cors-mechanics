@@ -683,67 +683,12 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
             }
 
             val teamStatsheetIDs = seasonStatsheets.flatMap(BlaseballSeasonStatsheet::teamStats)
-            /*val teamStatsheets = if (teamStatsheetIDs.isNotEmpty()) {
-                teamStatsheetIDs.chunked(8)
-                    .flatMap { chunk ->
-                        if (time == null) {
-                            httpClient.get<List<BlaseballTeamStatsheet>>("https://www.blaseball.com/database/teamStatsheets") {
-                                parameter("ids", chunk.joinParams())
-                            }
-                        } else {
-                            httpClient.chroniclerEntityList<BlaseballTeamStatsheet>(chroniclerHost, "teamstatsheet", time) {
-                                parameter("id", chunk.joinParams())
-                            }
-                        }
-                    }.associateByTo(HashMap(), BlaseballTeamStatsheet::id)
-            } else
-                HashMap()
-
-            teamStatsheetIDs.filterNot(teamStatsheets::containsKey).let { missing ->
-                if (missing.isNotEmpty()) {
-                    missing.chunked(8).forEach { chunk ->
-                        httpClient.get<List<BlaseballTeamStatsheet>>("https://www.blaseball.com/database/teamStatsheets") {
-                            parameter("ids", chunk.joinParams())
-                        }.forEach { statsheet ->
-                            teamStatsheets[statsheet.id] = statsheet
-                        }
-                    }
-                }
-            }
-
-            val playerStatsheetIDs = teamStatsheets.values.flatMap(BlaseballTeamStatsheet::playerStats)
-            val playerStatsheets = if (playerStatsheetIDs.isNotEmpty()) {
-                playerStatsheetIDs.chunked(8).flatMap { chunk ->
-                    if (time == null) {
-                        httpClient.get<List<BlaseballPlayerStatsheet>>("https://www.blaseball.com/database/playerStatsheets") {
-                            parameter("ids", chunk.joinParams())
-                        }
-                    } else {
-                        httpClient.chroniclerEntityList<BlaseballPlayerStatsheet>(chroniclerHost, "playerstatsheet", time) {
-                            parameter("id", chunk.joinParams())
-                        }
-                    }
-                }.associateByTo(HashMap(), BlaseballPlayerStatsheet::id)
-            } else
-                HashMap()
-
-            playerStatsheetIDs.filterNot(playerStatsheets::containsKey).let { missing ->
-                if (missing.isNotEmpty()) {
-                    missing.chunked(8).forEach { chunk ->
-                        httpClient.get<List<BlaseballPlayerStatsheet>>("https://www.blaseball.com/database/playerStatsheets") {
-                            parameter("ids", chunk.joinParams())
-                        }.forEach { statsheet ->
-                            playerStatsheets[statsheet.id] = statsheet
-                        }
-                    }
-                }
-            }*/
-
             val teamStatsheets = buildList<ConvenienceTeamStatsheet> {
                 coroutineScope {
                     teamStatsheetIDs.map { teamStatsheetID ->
                         launch {
-                            addAll(TEAM_STATSHEETS_BY_STAT_ID[Pair(time, teamStatsheetID.id)].await())
+                            TEAM_STATSHEETS_BY_STAT_ID[Pair(time, teamStatsheetID.id)].await()
+                                ?.let(this@buildList::addAll)
                         }
                     }.joinAll()
                 }
