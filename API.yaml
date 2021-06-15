@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Title
+  description: Title
+  version: 1.0.0
+servers:
+  - url: 'https://corsmechanics.brella.dev'
+paths:
+  /health:
+    get:
+      description: Returns 200 with no body if healthy
+      responses:
+          '200':
+            description: This server is healthy
+
+  /www.blaseball.com/events/streamData:
+    get:
+      description: Returns data from Eventually, coupled with temporal nut data.
+      responses:
+        '200':
+          description: A list of events that match the filters
+
+    parameters:
+      - name: user
+        in: query
+        description: If user has given a peanut to any of the filtered events, return upnut in metadata
+        required: false
+        style: simple
+        schema:
+          type: string
+        example: 7fcb63bc-11f2-40b9-b465-f1d458692a63
+      - name: time
+        in: query
+        description: Filters nuts given before this time (historic data not available before 30th of April 2021), treated as the milliseconds since the unix epoch (UTC Offset)
+        required: false
+        style: simple
+        schema:
+          type: number
+      - name:

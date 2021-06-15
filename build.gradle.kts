@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.0.2"
+version = "1.0.3"
 
 repositories {
     mavenCentral()
@@ -112,7 +112,7 @@ tasks.create<Sync>("syncShadowJarArchive") {
 }
 
 tasks.named("createDockerfile") {
-    dependsOn(":syncShadowJarArchive")
+    dependsOn("syncShadowJarArchive")
 }
 
 tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImage") {

@@ -20,9 +20,11 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+import kotlinx.datetime.toInstant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.util.concurrent.TimeUnit
 
@@ -123,14 +125,14 @@ data class ConvenienceTeamStatsheet(
 @Serializable
 data class ConveniencePlayerStatsheet(
     val id: PlayerStatsheetID,
-    val playerId: PlayerID,
-    val teamId: TeamID,
+    val playerId: PlayerID?,
+    val teamId: TeamID?,
     val team: String,
     val name: String,
     val atBats: Int,
     val caughtStealing: Int,
     val doubles: Int,
-    val earnedRuns: Int,
+    val earnedRuns: Double,
     val groundIntoDp: Int,
     val hits: Int,
     val hitsAllowed: Int,
@@ -197,6 +199,45 @@ data class ConvenienceSeasonData(
     val terminology: TerminologyID
 )
 
+@Serializable
+data class BlaseballPlayerStatsheet(
+    val id: PlayerStatsheetID,
+    val playerId: PlayerID?,
+    val teamId: TeamID?,
+    val team: String,
+    val name: String,
+    val atBats: Int,
+    val caughtStealing: Int,
+    val doubles: Int,
+    val earnedRuns: Double,
+    val groundIntoDp: Int,
+    val hits: Int,
+    val hitsAllowed: Int,
+    val homeRuns: Int,
+    val losses: Int,
+    val outsRecorded: Int,
+    val rbis: Int,
+    val runs: Double,
+    val stolenBases: Int,
+    val strikeouts: Int,
+    val struckouts: Int,
+    val triples: Int,
+    val walks: Int,
+    val walksIssued: Int,
+    val wins: Int,
+    val hitByPitch: Int? = null,
+    val hitBatters: Int? = null,
+    val quadruples: Int? = null,
+    val pitchesThrown: Int? = null
+)
+
+suspend inline fun <reified T> HttpClient.chroniclerVersionMostRecent(chroniclerHost: String, type: String, builder: HttpRequestBuilder.() -> Unit = {}): T =
+    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+        parameter("type", type)
+
+        builder()
+    }.items.first().data
+
 suspend inline fun <reified T> HttpClient.chroniclerVersionList(chroniclerHost: String, type: String, builder: HttpRequestBuilder.() -> Unit = {}): List<T> =
     get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
         parameter("type", type)
@@ -226,6 +267,14 @@ suspend inline fun <reified T> HttpClient.chroniclerEntityMostRecent(chroniclerH
 
         builder()
     }.items.maxByOrNull(ChroniclerV2Item<T>::validFrom)!!.data
+suspend inline fun <reified T> HttpClient.chroniclerEntityMostRecentOrNull(chroniclerHost: String, type: String, at: String, builder: HttpRequestBuilder.() -> Unit = {}): T? =
+    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+        parameter("type", type)
+        parameter("at", at)
+
+        builder()
+    }.items.maxByOrNull(ChroniclerV2Item<T>::validFrom)?.data
+
 
 val SEASON_STREAM_QUERY_TIMES = arrayOf(
     "2020-07-26T00:00:00Z",
@@ -316,8 +365,9 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
 //            }
 
             val tiebreakersDeferred = async {
-                when (val element = httpClient.chroniclerEntityMostRecent<JsonElement>(chroniclerHost, "tiebreakers", at = time)) {
+                when (val element = httpClient.chroniclerEntityMostRecentOrNull<JsonElement>(chroniclerHost, "tiebreakers", at = time)) {
                     is JsonArray -> json.decodeFromJsonElement<List<BlaseballTiebreaker>>(element)
+                    null -> listOf()
                     else -> listOf(json.decodeFromJsonElement<BlaseballTiebreaker>(element))
                 }
             }
@@ -740,36 +790,55 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
             )
         }
 
+    val SEASON_QUERY_BY_NUMBER = Caffeine.newBuilder()
+        .expireAfterAccess(5, TimeUnit.MINUTES)
+        .buildCoroutines<Int, String> { season ->
+            SEASON_STREAM_QUERY_TIMES.getOrNull(season)?.let { return@buildCoroutines it }
+
+            //So there's no direct way to get this
+            //TODO: Build an endpoint for it
+            //But, we can hack around it by calling *eventually* and getting the first event of a season
+            return@buildCoroutines httpClient.get<List<JsonObject>>("https://api.sibr.dev/eventually/v2/events?limit=1&season_min=${season - 1}&season_max=${season + 1}")
+                .first()
+                .getString("created")
+                .toInstant()
+                .toString()
+        }
     val SEASON_BY_NUMBER = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
         .buildCoroutines<String, ConvenienceSeasonData> { season ->
-            val seasonData = httpClient.get<BlaseballSeasonData>("https://www.blaseball.com/database/season") {
-                parameter("number", season)
-            }
-
-            val leagues = LEAGUE_TEAMS[SEASON_STREAM_QUERY_TIMES[seasonData.seasonNumber]].asDeferred()
-
-            val standings = async {
-                httpClient.chroniclerEntityMostRecent<BlaseballStandings>(chroniclerHost, "standings", at = Clock.System.now().toString()) {
-                    parameter("id", seasonData.standings.id)
+            try {
+                val seasonData = httpClient.get<BlaseballSeasonData>("https://www.blaseball.com/database/season") {
+                    parameter("number", season)
                 }
+
+                val leagues = LEAGUE_TEAMS[SEASON_QUERY_BY_NUMBER[seasonData.seasonNumber].await()].asDeferred()
+
+                val standings = async {
+                    httpClient.chroniclerEntityMostRecent<BlaseballStandings>(chroniclerHost, "standings", at = Clock.System.now().toString()) {
+                        parameter("id", seasonData.standings.id)
+                    }
+                }
+
+                val stats = SEASON_STATSHEETS_BY_STAT_ID[Pair(null, seasonData.stats.id)].asDeferred()
+
+                return@buildCoroutines ConvenienceSeasonData(
+                    seasonData.id,
+                    leagues.await().firstOrNull { league -> league.id == seasonData.league },
+                    seasonData.league,
+                    seasonData.rules,
+                    seasonData.schedule,
+                    seasonData.seasonNumber,
+                    standings.await(),
+                    seasonData.standings,
+                    stats.await().firstOrNull { stat -> stat.id == seasonData.stats },
+                    seasonData.stats,
+                    seasonData.terminology
+                )
+            } catch (th: Throwable) {
+                th.printStackTrace()
+                throw th
             }
-
-            val stats = SEASON_STATSHEETS_BY_STAT_ID[Pair(null, seasonData.stats.id)].asDeferred()
-
-            return@buildCoroutines ConvenienceSeasonData(
-                seasonData.id,
-                leagues.await().firstOrNull { league -> league.id == seasonData.league },
-                seasonData.league,
-                seasonData.rules,
-                seasonData.schedule,
-                seasonData.seasonNumber,
-                standings.await(),
-                seasonData.standings,
-                stats.await().firstOrNull { stat -> stat.id == seasonData.stats },
-                seasonData.stats,
-                seasonData.terminology
-            )
         }
 
     val SEASON_STATSHEETS_BY_SEASON = Caffeine.newBuilder()
