@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.take
@@ -300,7 +301,15 @@ fun Application.module(testing: Boolean = false) {
         }
 
     val streamData = LiveData(json, http, CorsMechanics)
-    val liveDataJsonString = streamData.liveData.map(json::encodeToString)
+    val liveDataJsonString = streamData.liveData
+        .mapNotNull {
+            try {
+                json.encodeToString(it)
+            } catch (th: Throwable) {
+                th.printStackTrace()
+                null
+            }
+        }
         .shareIn(CorsMechanics, SharingStarted.Eagerly, 1)
 
     setupConvenienceRoutes(http, streamData, liveDataJsonString)
@@ -344,7 +353,7 @@ fun Route.blaseballEventStreamHandler(streamData: LiveData, liveDataJsonString: 
             }
         }
 
-        webSocket("/streamData") {
+        webSocket("/websocket") {
             val format = call.request.queryParameters["format"]
 
             if (format?.equals("kvon", true) == true) {
