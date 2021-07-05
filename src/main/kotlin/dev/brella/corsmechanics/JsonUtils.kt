@@ -53,3 +53,19 @@ public inline fun JsonObject.getStringOrNull(key: String) =
 
 public inline fun JsonObject.getLongOrNull(key: String) =
     get(key)?.jsonPrimitive?.longOrNull
+
+public inline fun JsonObject.mapKeys(block: (key: String, value: JsonElement) -> String) =
+    JsonObject((this as Map<String, JsonElement>).mapKeys { block(it.key, it.value) })
+
+public inline fun JsonObject.mapValues(block: (key: String, value: JsonElement) -> JsonElement) =
+    JsonObject((this as Map<String, JsonElement>).mapValues { block(it.key, it.value) })
+
+public inline fun buildJsonObjectFrom(base: JsonObject, block: JsonObjectBuilder.(key: String, value: JsonElement) -> Boolean) =
+    buildJsonObject {
+        base.forEach { (k, v) ->
+            if (block(k, v)) put(k, v)
+        }
+    }
+
+public inline fun JsonArray.forEachString(block: (String) -> Unit) =
+    forEach { it.jsonPrimitiveOrNull?.contentOrNull?.let(block) }

@@ -10,16 +10,19 @@ import io.ktor.http.*
 import io.ktor.response.*
 import io.ktor.routing.*
 import io.ktor.util.*
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.future.asDeferred
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.toInstant
@@ -91,7 +94,7 @@ data class ChroniclerBlaseballTeam(
 )
 
 @Serializable
-data class ChroniclerV2Data<T>(val nextPage: String? = null, val items: List<ChroniclerV2Item<T>>)
+data class ChroniclerV2Data<T>(val nextPage: String? = null, val items: List<ChroniclerV2Item<T>> = emptyList())
 
 @Serializable
 data class ChroniclerV2Item<T>(val entityId: String, val hash: String, val validFrom: Instant, val validTo: Instant?, val data: T)
@@ -298,11 +301,54 @@ val SEASON_STREAM_QUERY_TIMES = arrayOf(
     "2021-05-23T00:00:00Z"
 )
 
+data class PlayerRequest(val players: List<String>, val time: String?, val backing: CompletableDeferred<Map<String, JsonObject>> = CompletableDeferred()): CompletableDeferred<Map<String, JsonObject>> by backing
+
 @OptIn(ExperimentalStdlibApi::class)
 fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveData, liveDataStringFlow: SharedFlow<String>) {
     val chroniclerHost = "https://api.sibr.dev/chronicler"
 
     val siteFileRoutes = SiteFileRoutes(this, httpClient)
+
+    val PLAYERS = actor<PlayerRequest> {
+        val cache = Caffeine.newBuilder()
+            .expireAfterAccess(1, TimeUnit.MINUTES)
+            .build<Pair<String?, String>, JsonObject>()
+
+        receiveAsFlow().onEach { request ->
+            val map: MutableMap<String, JsonObject> = HashMap()
+
+            request.players.forEach { id -> cache.getIfPresent(Pair(request.time, id))?.let { map[id] = it } }
+            request.players.filterNot(map::containsKey).let { missing ->
+                if (missing.isNotEmpty()) {
+                    if (request.time == null) {
+                        httpClient.get<List<JsonObject>>("https://www.blaseball.com/database/players") {
+                            parameter("ids", missing.joinToString(","))
+                        }.associateByTo(map) { it.getString("id") }
+                    } else {
+                        httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "player", request.time) {
+                            parameter("id", missing.joinToString(","))
+                        }.associateByTo(map) { it.getString("id") }
+                    }
+                }
+            }
+            request.players.filterNot(map::containsKey).let { missing ->
+                if (missing.isNotEmpty()) {
+                    httpClient.get<List<JsonObject>>("https://www.blaseball.com/database/players") {
+                        parameter("ids", missing.joinToString(","))
+                    }.associateByTo(map) { it.getString("id") }
+                }
+            }
+
+            map.forEach { (k, v) -> cache.put(Pair(request.time, k), v) }
+
+            request.complete(map)
+        }.launchIn(this).join()
+    }
+
+    suspend fun PlayerRequest.request(): Map<String, JsonObject> {
+        PLAYERS.send(this)
+        return await()
+    }
 
     val TEAMS = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
@@ -320,28 +366,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
                 team.getJsonArrayOrNull("bench")?.forEach { it.jsonPrimitiveOrNull?.contentOrNull?.let(this::add) }
             }
 
-            val players = if (playerIDs.isNotEmpty()) {
-                if (time == null) {
-                    httpClient.get<List<JsonObject>>("https://www.blaseball.com/database/players") {
-                        parameter("ids", playerIDs.joinToString(","))
-                    }.associateByTo(HashMap()) { it.getString("id") }
-                } else {
-                    httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "playerstatsheet", time) {
-                        parameter("id", playerIDs.joinToString(","))
-                    }.associateByTo(HashMap()) { it.getString("id") }
-                }
-            } else
-                HashMap()
-
-            playerIDs.filterNot(players::containsKey).let { missing ->
-                if (missing.isNotEmpty()) {
-                    httpClient.get<List<JsonObject>>("https://www.blaseball.com/database/players") {
-                        parameter("ids", missing.joinToString(","))
-                    }.forEach { player ->
-                        players[player.getString("id")] = player
-                    }
-                }
-            }
+            val players = PlayerRequest(playerIDs, time).request()
 
             return@buildCoroutines buildJsonObject {
                 team.forEach { (k, v) ->
@@ -814,6 +839,52 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
             }
         }
 
+    val VAULT_OF_THE_RANGER = Caffeine.newBuilder()
+        .expireAfterWrite(1, TimeUnit.MINUTES)
+        .buildCoroutines<String, JsonObject> { time ->
+            val rawData = httpClient.get<JsonObject>("https://www.blaseball.com/database/vault")
+
+            val playerIDs = rawData.getJsonArray("legendaryPlayers").mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+            val players = PlayerRequest(playerIDs, time).request()
+
+            buildJsonObjectFrom(rawData) { k, v ->
+                when (k) {
+                    "legendaryPlayers" -> {
+                        putJsonArray("legendaryPlayers") {
+                            v.jsonArrayOrNull?.forEachString { players[it]?.let(this::add) }
+                        }
+                        put("legendaryPlayerIDs", v)
+
+                        false
+                    }
+                    else -> true
+                }
+            }
+        }
+
+    val RISING_STARS = Caffeine.newBuilder()
+        .expireAfterWrite(1, TimeUnit.MINUTES)
+        .buildCoroutines<String, JsonObject> { time ->
+            val rawData = httpClient.get<JsonObject>("https://www.blaseball.com/api/getRisingStars")
+
+            val playerIDs = rawData.getJsonArray("stars").mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+            val players = PlayerRequest(playerIDs, time).request()
+
+            buildJsonObjectFrom(rawData) { k, v ->
+                when (k) {
+                    "stars" -> {
+                        putJsonArray("stars") {
+                            v.jsonArrayOrNull?.forEachString { players[it]?.let(this::add) }
+                        }
+                        put("starIDs", v)
+
+                        false
+                    }
+                    else -> true
+                }
+            }
+        }
+
     routing {
         withJsonExplorer("/league_teams") {
             LEAGUE_TEAMS[request.queryParameters["at"] ?: "NOW"].await()
@@ -861,6 +932,14 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
 
         get("/database/willResults") {
 
+        }
+
+        withJsonExplorer("/vault") {
+            VAULT_OF_THE_RANGER[request.queryParameters["at"] ?: "NOW"].await()
+        }
+
+        withJsonExplorer("/rising_stars") {
+            RISING_STARS[request.queryParameters["at"] ?: "NOW"].await()
         }
 
         val liveDataFlow = liveData.liveData
