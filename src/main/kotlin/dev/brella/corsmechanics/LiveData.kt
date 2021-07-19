@@ -9,6 +9,7 @@ import io.ktor.http.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -19,7 +20,10 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -46,8 +50,10 @@ class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, 
             val content = call.response.content
 
             while (isActive && !content.isClosedForRead) {
-
-                val line = content.readUTF8Line() ?: return@channelFlow
+                val line = buildString {
+                    append(content.readUTF8Line() ?: return@buildString)
+                    append(content.readUTF8Line() ?: return@buildString)
+                }.trim()
 
                 if (line.startsWith("data:")) {
                     send(json.parseToJsonElement(line.substringAfter("data:").trim()).jsonObject.getValue("value").jsonObject)
@@ -58,35 +64,48 @@ class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, 
         }
     }
 
-    val updateJob = scope.launch(context) {
-        var last: JsonObject? = null
-        val failures: MutableMap<String?, Int> = HashMap()
+    var updateJob: Job? = null
 
-        while (isActive) {
-            try {
-                getLiveDataStream()
-                    .onEach { event ->
-                        val update = JsonObject(HashMap(event).also { map ->
-                            last?.forEach { (k, v) -> map.putIfAbsent(k, v) }
-                        })
+    fun relaunchJob() {
+        println("RELAUNCHING")
 
-                        liveData.emit(buildJsonObject {
-                            put("value", update)
-                        })
+        liveData.resetReplayCache()
+        liveUpdates.resetReplayCache()
 
-                        liveUpdates.emit(buildJsonObject {
-                            put("value", event)
-                        })
+        updateJob?.cancel()
+        updateJob = scope.launch(context) {
+            val updateData: MutableMap<String, JsonElement> = HashMap()
+            val updateJson = JsonObject(updateData)
+            val failures: MutableMap<String?, Int> = HashMap()
 
-                        last = update
-                    }.launchIn(this)
-                    .join()
-            } catch (th: Throwable) {
-                th.printStackTrace()
-                val seen = failures.compute(th.message) { _, i -> i?.plus(1) ?: 1 }
+            while (isActive) {
+                try {
+                    withTimeout(120_000) {
+                        getLiveDataStream()
+                            .onEach { event ->
+                                event.forEach { (k, v) -> updateData[k] = v }
 
-                println("Starting back up (Seen this error $seen times)...")
+                                liveData.emit(buildJsonObject {
+                                    put("value", updateJson)
+                                })
+
+                                liveUpdates.emit(buildJsonObject {
+                                    put("value", event)
+                                })
+                            }.launchIn(this)
+                            .join()
+                    }
+                } catch (th: Throwable) {
+                    th.printStackTrace()
+                    val seen = failures.compute(th.message) { _, i -> i?.plus(1) ?: 1 }
+
+                    println("Starting back up (Seen this error $seen times)...")
+                }
             }
         }
+    }
+
+    init {
+        relaunchJob()
     }
 }

@@ -944,6 +944,10 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
 
         val liveDataFlow = liveData.liveData
 
-        jsonExplorer("/stream") { liveDataFlow.first().getJsonObject("value") }
+        jsonExplorer("/stream") {
+            if (liveData.updateJob?.isActive != true) liveData.relaunchJob()
+
+            liveDataFlow.first().getJsonObject("value")
+        }
     }
 }

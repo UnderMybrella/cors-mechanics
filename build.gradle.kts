@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.0.7"
+version = "1.0.8"
 
 repositories {
     mavenCentral()
@@ -24,18 +24,32 @@ dependencies {
 
     val ktor_version = "1.6.0"
 
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.2.1")
+
     implementation("io.ktor:ktor-server-netty:$ktor_version")
-    implementation("io.ktor:ktor-serialization:$ktor_version")
+    implementation("io.ktor:ktor-serialization:$ktor_version") {
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    }
     implementation("io.ktor:ktor-websockets:$ktor_version")
 
     implementation("io.ktor:ktor-client-okhttp:$ktor_version")
     implementation("io.ktor:ktor-client-encoding:$ktor_version")
     implementation("io.ktor:ktor-client-core-jvm:$ktor_version")
-    implementation("io.ktor:ktor-client-serialization:$ktor_version")
+    implementation("io.ktor:ktor-client-serialization:$ktor_version") {
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    }
     implementation("io.ktor:ktor-client-encoding:$ktor_version")
 
-    implementation("dev.brella:kotlinx-serialisation-kvon:1.1.0")
-    implementation("dev.brella:ktor-client-kvon:1.0.0")
+    implementation("dev.brella:kotlinx-serialisation-kvon:1.1.0") {
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    }
+    implementation("dev.brella:ktor-client-kvon:1.0.0") {
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
+        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    }
     implementation("dev.brella:kornea-errors:2.2.0-alpha")
     implementation("dev.brella:ktornea-utils:1.3.3-alpha")
 

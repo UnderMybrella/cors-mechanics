@@ -143,7 +143,9 @@ suspend inline fun ApplicationCall.respondProxied(proxiedResponse: ProxiedRespon
         }
     }
 
-    respond(proxiedResponse.status, proxiedResponse.body)
+    val etag = request.header(HttpHeaders.IfNoneMatch)
+    if (etag != null && etag == proxiedResponse.headers[HttpHeaders.ETag]) respond(HttpStatusCode.NotModified, EmptyContent)
+    else respond(proxiedResponse.status, proxiedResponse.body)
 }
 
 suspend inline fun ApplicationCall.respondProxied(proxiedResponse: ProxiedResponse, extraHeaders: Headers) {
@@ -158,7 +160,9 @@ suspend inline fun ApplicationCall.respondProxied(proxiedResponse: ProxiedRespon
         }
     }
 
-    respond(proxiedResponse.status, proxiedResponse.body)
+    val etag = request.header(HttpHeaders.IfNoneMatch)
+    if (etag != null && etag == proxiedResponse.headers[HttpHeaders.ETag]) respond(HttpStatusCode.NotModified, EmptyContent)
+    else respond(proxiedResponse.status, proxiedResponse.body)
 }
 
 val json = Json {
@@ -302,14 +306,7 @@ fun Application.module(testing: Boolean = false) {
 
     val streamData = LiveData(json, http, CorsMechanics)
     val liveDataJsonString = streamData.liveData
-        .mapNotNull {
-            try {
-                json.encodeToString(it)
-            } catch (th: Throwable) {
-                th.printStackTrace()
-                null
-            }
-        }
+        .mapNotNull(JsonObject::toString)
         .shareIn(CorsMechanics, SharingStarted.Eagerly, 1)
 
     setupConvenienceRoutes(http, streamData, liveDataJsonString)
@@ -340,6 +337,8 @@ fun Application.module(testing: Boolean = false) {
 fun Route.blaseballEventStreamHandler(streamData: LiveData, liveDataJsonString: SharedFlow<String>) {
     route("/events") {
         get("/streamData") {
+            if (streamData.updateJob?.isActive != true) streamData.relaunchJob()
+
             call.respondTextWriter(ContentType.Text.EventStream) {
                 liveDataJsonString.take(5).onEach { data ->
                     withContext(Dispatchers.IO) {
@@ -354,6 +353,7 @@ fun Route.blaseballEventStreamHandler(streamData: LiveData, liveDataJsonString: 
         }
 
         webSocket("/websocket") {
+            if (streamData.updateJob?.isActive != true) streamData.relaunchJob()
             val format = call.request.queryParameters["format"]
 
             if (format?.equals("kvon", true) == true) {
