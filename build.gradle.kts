@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.0.8"
+version = "1.1.0"
 
 repositories {
     mavenCentral()
@@ -58,6 +58,8 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.5.0")
+
+    implementation("com.arakelian:java-jq:1.1.0")
 
     implementation("dev.brella:kornea-blaseball-base:2.3.5-alpha")
     implementation("dev.brella:kornea-blaseball-api:2.3.1-alpha") {

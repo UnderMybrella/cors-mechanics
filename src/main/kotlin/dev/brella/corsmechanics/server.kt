@@ -27,15 +27,14 @@ import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.shareIn
-import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.future.future
 import kotlinx.coroutines.withContext
@@ -206,6 +205,7 @@ fun ApplicationCall.buildProxiedRoute(): String? {
 //    }
 
 val requestCacheBuckets: RequestCacheBuckets = ConcurrentHashMap()
+val dataSources = BlaseballDataSource.Instances(json, http, CorsMechanics)
 
 inline fun forRequest(host: String, path: String, queryParameters: String): CompletableFuture<ProxiedResponse>? {
     val (fallback, buckets) = requestCacheBuckets[host] ?: return null
@@ -304,12 +304,7 @@ fun Application.module(testing: Boolean = false) {
             aliasNames.forEach { name -> requestCacheBuckets[name] = Pair(cache, pathCaches) }
         }
 
-    val streamData = LiveData(json, http, CorsMechanics)
-    val liveDataJsonString = streamData.liveData
-        .mapNotNull(JsonObject::toString)
-        .shareIn(CorsMechanics, SharingStarted.Eagerly, 1)
-
-    setupConvenienceRoutes(http, streamData, liveDataJsonString)
+    setupConvenienceRoutes(http, dataSources)
 
     routing {
         get("/health") {
@@ -328,19 +323,20 @@ fun Application.module(testing: Boolean = false) {
             }
         }
 
-        route("/www.blaseball.com") { blaseballEventStreamHandler(streamData, liveDataJsonString) }
-        route("/blaseball.com") { blaseballEventStreamHandler(streamData, liveDataJsonString) }
-        route("/blaseball") { blaseballEventStreamHandler(streamData, liveDataJsonString) }
+        route("/www.blaseball.com") { blaseballEventStreamHandler(dataSources) }
+        route("/blaseball.com") { blaseballEventStreamHandler(dataSources) }
+        route("/blaseball") { blaseballEventStreamHandler(dataSources) }
     }
 }
 
-fun Route.blaseballEventStreamHandler(streamData: LiveData, liveDataJsonString: SharedFlow<String>) {
+fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances) {
     route("/events") {
         get("/streamData") {
-            if (streamData.updateJob?.isActive != true) streamData.relaunchJob()
+            val dataSource = dataSources sourceFor call
+            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
 
             call.respondTextWriter(ContentType.Text.EventStream) {
-                liveDataJsonString.take(5).onEach { data ->
+                val job = dataSource.eventStringStream.onEach { data ->
                     withContext(Dispatchers.IO) {
                         append("data:")
                         append(data)
@@ -348,17 +344,87 @@ fun Route.blaseballEventStreamHandler(streamData: LiveData, liveDataJsonString: 
                         appendLine()
                         flush()
                     }
-                }.launchIn(this@get).join()
+                }.launchIn(this@get)
+
+                for (i in 0 until 20) {
+                    delay(5000)
+                    if (!job.isActive) break
+                }
+
+                if (job.isActive) job.cancelAndJoin()
             }
         }
 
-        webSocket("/websocket") {
-            if (streamData.updateJob?.isActive != true) streamData.relaunchJob()
+        get("/streamData/{path...}") {
+            val dataSource = dataSources sourceFor call
+            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+            val path = call.parameters.getAll("path") ?: emptyList()
+
+            call.respondTextWriter(ContentType.Text.EventStream) {
+                val job = dataSource.eventStream.liveData.onEach { data ->
+                    withContext(Dispatchers.IO) {
+                        append("data:")
+                        append(data.filterByPath(path)?.toString())
+                        appendLine()
+                        appendLine()
+                        flush()
+                    }
+                }.launchIn(this@get)
+
+                for (i in 0 until 20) {
+                    delay(5000)
+                    if (!job.isActive) break
+                }
+
+                if (job.isActive) job.cancelAndJoin()
+            }
+        }
+
+        post<String>("/streamData/jq") { filter ->
+            val dataSource = dataSources sourceFor call
+            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+
+            call.respondTextWriter(ContentType.Text.EventStream) {
+                val job = dataSource.eventStringStream.onEach { data ->
+                    withContext(Dispatchers.IO) {
+                        val request = Jq.executeRequest(data, filter)
+                        if (request.hasErrors()) {
+                            appendLine("event: error")
+                            request.errors.forEach { line ->
+                                append("data:")
+                                appendLine(line)
+                            }
+                            appendLine()
+                            flush()
+                            close()
+                        } else {
+                            append("data:")
+                            appendLine(request.output)
+                            appendLine()
+                            flush()
+                        }
+                    }
+                }.launchIn(this@post)
+
+                for (i in 0 until 20) {
+                    delay(5000)
+                    if (!job.isActive) break
+                }
+
+                if (job.isActive) job.cancelAndJoin()
+            }
+        }
+
+        webSocket("/streamSocket") {
+            val dataSource = dataSources sourceFor call
+            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
             val format = call.request.queryParameters["format"]
+            val wait = call.request.queryParameters["wait"]?.toBooleanStrictOrNull() ?: false
 
             if (format?.equals("kvon", true) == true) {
                 var previous: JsonObject? = null
-                streamData.liveData.onEach { data ->
+
+                dataSource.eventStream.liveData.onEach { data ->
                     val kvon = data.compressElementWithKvon(previous, false)
                     send(json.encodeToString(kvon))
 
@@ -370,8 +436,31 @@ fun Route.blaseballEventStreamHandler(streamData: LiveData, liveDataJsonString: 
 //                            .launchIn(this)
 //                            .join()
 
-                liveDataJsonString
-                    .onEach { data -> send(data) }
+                var filter: String? = null
+
+                incoming.receiveAsFlow()
+                    .filterIsInstance<Frame.Text>()
+                    .onEach { frame -> filter = frame.readText() }
+                    .launchIn(this)
+
+                if (wait) while (filter == null) delay(1_000)
+
+                dataSource.eventStringStream
+                    .onEach { data ->
+                        if (filter == null) {
+                            send(data)
+                        } else {
+                            val response = Jq.executeRequest(data, filter!!)
+                            if (response.hasErrors()) {
+                                close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, buildString {
+                                    append("Jq request with filter ($filter) had errors: ")
+                                    response.errors.joinTo(this)
+                                }))
+                            } else {
+                                send(response.output)
+                            }
+                        }
+                    }
                     .launchIn(this)
                     .join()
             }

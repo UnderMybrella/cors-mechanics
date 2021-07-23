@@ -30,7 +30,7 @@ import kotlinx.serialization.json.jsonObject
 import java.nio.ByteBuffer
 import kotlin.coroutines.CoroutineContext
 
-class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext) {
+class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: String = "https://www.blaseball.com/events/streamData") {
     //    val simulationData: MutableList<BlaseballStreamData> = ArrayList()
 //    val games: MutableMap<GameID, BlaseballUpdatingGame> = HashMap()
 //    val chroniclerGames: MutableMap<GameID, Map<Int, BlaseballDatabaseGame>> = HashMap()
@@ -41,7 +41,7 @@ class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, 
     //            url("http://localhost:9897/blaseball/accelerated/live_bait/events/streamData")
     suspend fun getLiveDataStream(): Flow<JsonObject> {
         val call = http.executeStatement {
-            url("https://www.blaseball.com/events/streamData")
+            url(endpoint)
             method = HttpMethod.Get
         }
         if (!call.response.status.isSuccess()) return emptyFlow()

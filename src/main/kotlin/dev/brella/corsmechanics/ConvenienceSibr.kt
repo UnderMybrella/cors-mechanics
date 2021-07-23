@@ -304,7 +304,7 @@ val SEASON_STREAM_QUERY_TIMES = arrayOf(
 data class PlayerRequest(val players: List<String>, val time: String?, val backing: CompletableDeferred<Map<String, JsonObject>> = CompletableDeferred()): CompletableDeferred<Map<String, JsonObject>> by backing
 
 @OptIn(ExperimentalStdlibApi::class)
-fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveData, liveDataStringFlow: SharedFlow<String>) {
+fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: BlaseballDataSource.Instances) {
     val chroniclerHost = "https://api.sibr.dev/chronicler"
 
     val siteFileRoutes = SiteFileRoutes(this, httpClient)
@@ -942,12 +942,11 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, liveData: LiveDat
             RISING_STARS[request.queryParameters["at"] ?: "NOW"].await()
         }
 
-        val liveDataFlow = liveData.liveData
-
         jsonExplorer("/stream") {
-            if (liveData.updateJob?.isActive != true) liveData.relaunchJob()
+            val dataSource = dataSources sourceFor this
+            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
 
-            liveDataFlow.first().getJsonObject("value")
+            dataSource.eventStream.liveData.first().getJsonObject("value")
         }
     }
 }
