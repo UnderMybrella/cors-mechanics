@@ -123,6 +123,6 @@ inline fun <T> KorneaResult<T>.getAsStage(): CompletionStage<T> =
 
 class KorneaResultException(val result: KorneaResult<*>) : Throwable((result as? KorneaResult.WithException<*>)?.exception)
 
-typealias RequestCache = AsyncLoadingCache<String, ProxiedResponse>
+typealias RequestCache = AsyncLoadingCache<ProxyRequest, ProxiedResponse>
 typealias RequestCacheBuckets = MutableMap<String, Pair<RequestCache, MutableMap<String, RequestCache>>>
 

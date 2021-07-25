@@ -1,5 +1,6 @@
 package dev.brella.corsmechanics
 
+import com.github.benmanes.caffeine.cache.AsyncLoadingCache
 import com.github.benmanes.caffeine.cache.Caffeine
 import dev.brella.kotlinx.serialisation.kvon.Kvon
 import dev.brella.kotlinx.serialisation.kvon.KvonData
@@ -22,6 +23,7 @@ import io.ktor.request.*
 import io.ktor.response.*
 import io.ktor.routing.*
 import io.ktor.serialization.*
+import io.ktor.util.*
 import io.ktor.utils.io.core.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
@@ -111,10 +113,10 @@ public fun JsonElement.compressElementWithKvon(baseElement: JsonElement? = null,
 //    .installResultEvictionLeader<String, ProxiedResponse>()
 //    .buildImplied()
 
-data class ProxiedResponse(val body: Any, val status: HttpStatusCode, val headers: Headers) {
+data class ProxiedResponse(val body: Any, val status: HttpStatusCode, val headers: StringValues) {
     companion object {
-        suspend inline fun proxyFrom(response: HttpResponse) =
-            ProxiedResponse(response.receive<Input>().readBytes(), response.status, response.headers)
+        suspend inline fun proxyFrom(response: HttpResponse, passCookies: Boolean = false) =
+            ProxiedResponse(response.receive<Input>().readBytes(), response.status, if (passCookies) response.headers else response.headers.filter { k, v -> !k.equals(HttpHeaders.SetCookie, true) })
     }
 }
 
@@ -207,10 +209,12 @@ fun ApplicationCall.buildProxiedRoute(): String? {
 val requestCacheBuckets: RequestCacheBuckets = ConcurrentHashMap()
 val dataSources = BlaseballDataSource.Instances(json, http, CorsMechanics)
 
-inline fun forRequest(host: String, path: String, queryParameters: String): CompletableFuture<ProxiedResponse>? {
+inline fun forRequest(host: String, path: String, queryParameters: String, cookies: List<Cookie>): CompletableFuture<ProxiedResponse>? {
     val (fallback, buckets) = requestCacheBuckets[host] ?: return null
-    return (buckets[path] ?: fallback).get(if (queryParameters.isNotBlank()) "$path?$queryParameters" else path)
+    return (buckets[path] ?: fallback).get(ProxyRequest(host, if (queryParameters.isNotBlank()) "$path?$queryParameters" else path, cookies))
 }
+
+data class ProxyRequest(val host: String, val path: String, val cookies: List<Cookie>)
 
 @OptIn(ExperimentalTime::class, ExperimentalStdlibApi::class)
 fun Application.module(testing: Boolean = false) {
@@ -253,27 +257,76 @@ fun Application.module(testing: Boolean = false) {
             val proxyPass = proxyConfig.property("proxy_pass").getString()
             val proxyPassHost = proxyConfig.propertyOrNull("proxy_pass_host")?.getString()
 
+            val passCookies = proxyConfig.propertyOrNull("pass_cookies")?.getString()?.toBooleanStrictOrNull() ?: false
+
             val defaultCacheSpec = proxyConfig.propertyOrNull("default_cache")?.getString() ?: globalDefaultCacheSpec
 
             val defaultCacheBuilder = (defaultCacheSpec?.let { Caffeine.from(it) } ?: Caffeine.newBuilder().expireAfterWrite(1, TimeUnit.SECONDS))
 
-            val cache = if (proxyPassHost != null) {
-                defaultCacheBuilder
-                    .buildAsync<String, ProxiedResponse> { key, executor ->
-                        CorsMechanics.future {
-                            http.get<HttpResponse>("$proxyPass/$key") {
-                                header("Host", proxyPassHost)
-                            }.let { ProxiedResponse.proxyFrom(it) }
+            val cache: AsyncLoadingCache<ProxyRequest, ProxiedResponse> = if (proxyPassHost != null) {
+                if (passCookies) {
+                    defaultCacheBuilder
+                        .buildAsync { key, executor ->
+                            CorsMechanics.future {
+                                http.get<HttpResponse>("$proxyPass/${key.path}") {
+                                    header("Host", proxyPassHost)
+                                    key.cookies.forEach { cookie ->
+                                        cookie(
+                                            name = cookie.name,
+                                            value = cookie.value,
+                                            maxAge = cookie.maxAge,
+                                            expires = cookie.expires,
+                                            domain = cookie.domain,
+                                            path = cookie.path,
+                                            secure = cookie.secure,
+                                            httpOnly = cookie.httpOnly,
+                                            extensions = cookie.extensions
+                                        )
+                                    }
+                                }.let { ProxiedResponse.proxyFrom(it, true) }
+                            }
                         }
-                    }
+                } else {
+                    defaultCacheBuilder
+                        .buildAsync { key, executor ->
+                            CorsMechanics.future {
+                                http.get<HttpResponse>("$proxyPass/${key.path}") {
+                                    header("Host", proxyPassHost)
+                                }.let { ProxiedResponse.proxyFrom(it) }
+                            }
+                        }
+                }
             } else {
-                defaultCacheBuilder
-                    .buildAsync { key, executor ->
-                        CorsMechanics.future {
-                            http.get<HttpResponse>("$proxyPass/$key")
-                                .let { ProxiedResponse.proxyFrom(it) }
+                if (passCookies) {
+                    defaultCacheBuilder
+                        .buildAsync { key, executor ->
+                            CorsMechanics.future {
+                                http.get<HttpResponse>("$proxyPass/${key.path}") {
+                                    key.cookies.forEach { cookie ->
+                                        cookie(
+                                            name = cookie.name,
+                                            value = cookie.value,
+                                            maxAge = cookie.maxAge,
+                                            expires = cookie.expires,
+                                            domain = cookie.domain,
+                                            path = cookie.path,
+                                            secure = cookie.secure,
+                                            httpOnly = cookie.httpOnly,
+                                            extensions = cookie.extensions
+                                        )
+                                    }
+                                }.let { ProxiedResponse.proxyFrom(it, true) }
+                            }
                         }
-                    }
+                } else {
+                    defaultCacheBuilder
+                        .buildAsync { key, executor ->
+                            CorsMechanics.future {
+                                http.get<HttpResponse>("$proxyPass/${key.path}")
+                                    .let { ProxiedResponse.proxyFrom(it) }
+                            }
+                        }
+                }
             }
 
             val pathCaches: MutableMap<String, RequestCache> = ConcurrentHashMap()
@@ -317,7 +370,12 @@ fun Application.module(testing: Boolean = false) {
                     forRequest(
                         call.parameters["host"] ?: return@get,
                         call.parameters.getAll("route")?.joinToString("/") ?: return@get,
-                        call.request.queryString()
+                        call.request.queryString(),
+                        call.request
+                            .headers
+                            .getAll(HttpHeaders.Cookie)
+                            ?.map(::parseServerSetCookieHeader)
+                        ?: emptyList()
                     )?.await() ?: return@get
                 )
             }
@@ -333,9 +391,9 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
     route("/events") {
         get("/streamData") {
             val dataSource = dataSources sourceFor call
-            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
-
             call.respondTextWriter(ContentType.Text.EventStream) {
+                if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+
                 val job = dataSource.eventStringStream.onEach { data ->
                     withContext(Dispatchers.IO) {
                         append("data:")
@@ -357,10 +415,11 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
 
         get("/streamData/{path...}") {
             val dataSource = dataSources sourceFor call
-            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
             val path = call.parameters.getAll("path") ?: emptyList()
 
             call.respondTextWriter(ContentType.Text.EventStream) {
+                if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+
                 val job = dataSource.eventStream.liveData.onEach { data ->
                     withContext(Dispatchers.IO) {
                         append("data:")
@@ -418,6 +477,7 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
         webSocket("/streamSocket") {
             val dataSource = dataSources sourceFor call
             if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+
             val format = call.request.queryParameters["format"]
             val wait = call.request.queryParameters["wait"]?.toBooleanStrictOrNull() ?: false
 
