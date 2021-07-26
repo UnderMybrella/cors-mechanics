@@ -41,6 +41,7 @@ class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, 
             method = HttpMethod.Get
             timeout {
                 socketTimeoutMillis = 180_000L
+                connectTimeoutMillis = 20_000L
             }
             endpoint()
         }

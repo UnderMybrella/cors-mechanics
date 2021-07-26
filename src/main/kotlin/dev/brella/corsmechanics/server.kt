@@ -8,7 +8,7 @@ import dev.brella.ktornea.common.installGranularHttp
 import io.ktor.application.*
 import io.ktor.client.*
 import io.ktor.client.call.*
-import io.ktor.client.engine.okhttp.*
+import io.ktor.client.engine.cio.*
 import io.ktor.client.features.*
 import io.ktor.client.features.compression.*
 import io.ktor.client.features.json.*
@@ -29,6 +29,7 @@ import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
@@ -52,6 +53,7 @@ import org.slf4j.event.Level
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.ExperimentalTime
@@ -59,7 +61,9 @@ import kotlin.time.ExperimentalTime
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
 object CorsMechanics : CoroutineScope {
-    override val coroutineContext: CoroutineContext = SupervisorJob()
+    override val coroutineContext: CoroutineContext =
+        SupervisorJob() + Executors.newCachedThreadPool(NamedThreadFactory("CorsMechanics"))
+            .asCoroutineDispatcher()
 }
 
 
@@ -171,7 +175,7 @@ val json = Json {
     encodeDefaults = true
 }
 
-val http = HttpClient(OkHttp) {
+val http = HttpClient(CIO) {
     installGranularHttp()
 
     install(ContentEncoding) {
