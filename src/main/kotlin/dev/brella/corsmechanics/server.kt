@@ -188,6 +188,10 @@ val http = HttpClient(CIO) {
         serializer = KotlinxSerializer(json)
     }
 
+    install(HttpTimeout) {
+        connectTimeoutMillis = 20_000L
+    }
+
     expectSuccess = false
 
     defaultRequest {
@@ -213,12 +217,12 @@ fun ApplicationCall.buildProxiedRoute(): String? {
 val requestCacheBuckets: RequestCacheBuckets = ConcurrentHashMap()
 val dataSources = BlaseballDataSource.Instances(json, http, CorsMechanics)
 
-inline fun forRequest(host: String, path: String, queryParameters: String, cookies: List<Cookie>): CompletableFuture<ProxiedResponse>? {
+inline fun forRequest(source: BlaseballDataSource?, host: String, path: String, queryParameters: String, cookies: List<Cookie>): CompletableFuture<ProxiedResponse>? {
     val (fallback, buckets) = requestCacheBuckets[host] ?: return null
-    return (buckets[path] ?: fallback).get(ProxyRequest(host, if (queryParameters.isNotBlank()) "$path?$queryParameters" else path, cookies))
+    return (buckets[path] ?: fallback).get(ProxyRequest(source, host, if (queryParameters.isNotBlank()) "$path?$queryParameters" else path, cookies))
 }
 
-data class ProxyRequest(val host: String, val path: String, val cookies: List<Cookie>)
+data class ProxyRequest(val source: BlaseballDataSource?, val host: String, val path: String, val cookies: List<Cookie>)
 
 @OptIn(ExperimentalTime::class, ExperimentalStdlibApi::class)
 fun Application.module(testing: Boolean = false) {
@@ -233,7 +237,7 @@ fun Application.module(testing: Boolean = false) {
 
     install(ConditionalHeaders)
     install(StatusPages) {
-//        exception<Throwable> { cause -> call.respond(HttpStatusCode.InternalServerError, cause.stackTraceToString()) }
+        exception<Throwable> { cause -> call.respond(HttpStatusCode.InternalServerError, cause.stackTraceToString()) }
 //        exception<KorneaResultException> { cause ->
 //            val result = cause.result
 //            if (result is KorneaHttpResult) call.response.header("X-Response-Source", result.response.request.url.toString())
@@ -267,14 +271,16 @@ fun Application.module(testing: Boolean = false) {
 
             val defaultCacheBuilder = (defaultCacheSpec?.let { Caffeine.from(it) } ?: Caffeine.newBuilder().expireAfterWrite(1, TimeUnit.SECONDS))
 
-            val cache: AsyncLoadingCache<ProxyRequest, ProxiedResponse> = if (proxyPassHost != null) {
-                if (passCookies) {
-                    defaultCacheBuilder
-                        .buildAsync { key, executor ->
+            val cache: AsyncLoadingCache<ProxyRequest, ProxiedResponse> =
+                defaultCacheBuilder
+                    .buildAsync { key, executor ->
+                        if (key.source != null && proxyPass == "https://www.blaseball.com")
+                            key.source.buildRequest(key, executor, proxyPassHost, passCookies)
+                        else
                             CorsMechanics.future {
                                 http.get<HttpResponse>("$proxyPass/${key.path}") {
-                                    header("Host", proxyPassHost)
-                                    key.cookies.forEach { cookie ->
+                                    if (proxyPassHost != null) header("Host", proxyPassHost)
+                                    if (passCookies) key.cookies.forEach { cookie ->
                                         cookie(
                                             name = cookie.name,
                                             value = cookie.value,
@@ -289,49 +295,7 @@ fun Application.module(testing: Boolean = false) {
                                     }
                                 }.let { ProxiedResponse.proxyFrom(it, true) }
                             }
-                        }
-                } else {
-                    defaultCacheBuilder
-                        .buildAsync { key, executor ->
-                            CorsMechanics.future {
-                                http.get<HttpResponse>("$proxyPass/${key.path}") {
-                                    header("Host", proxyPassHost)
-                                }.let { ProxiedResponse.proxyFrom(it) }
-                            }
-                        }
-                }
-            } else {
-                if (passCookies) {
-                    defaultCacheBuilder
-                        .buildAsync { key, executor ->
-                            CorsMechanics.future {
-                                http.get<HttpResponse>("$proxyPass/${key.path}") {
-                                    key.cookies.forEach { cookie ->
-                                        cookie(
-                                            name = cookie.name,
-                                            value = cookie.value,
-                                            maxAge = cookie.maxAge,
-                                            expires = cookie.expires,
-                                            domain = cookie.domain,
-                                            path = cookie.path,
-                                            secure = cookie.secure,
-                                            httpOnly = cookie.httpOnly,
-                                            extensions = cookie.extensions
-                                        )
-                                    }
-                                }.let { ProxiedResponse.proxyFrom(it, true) }
-                            }
-                        }
-                } else {
-                    defaultCacheBuilder
-                        .buildAsync { key, executor ->
-                            CorsMechanics.future {
-                                http.get<HttpResponse>("$proxyPass/${key.path}")
-                                    .let { ProxiedResponse.proxyFrom(it) }
-                            }
-                        }
-                }
-            }
+                    }
 
             val pathCaches: MutableMap<String, RequestCache> = ConcurrentHashMap()
 
@@ -372,6 +336,7 @@ fun Application.module(testing: Boolean = false) {
             get("/{route...}") {
                 call.respondProxied(
                     forRequest(
+                        dataSources sourceFor call,
                         call.parameters["host"] ?: return@get,
                         call.parameters.getAll("route")?.joinToString("/") ?: return@get,
                         call.request.queryString(),

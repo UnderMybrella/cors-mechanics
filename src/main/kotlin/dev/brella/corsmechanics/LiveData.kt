@@ -55,13 +55,17 @@ class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, 
 
             while (isActive && !content.isClosedForRead) {
                 val line = buildString {
-                    append(content.readUTF8Line() ?: return@buildString)
-                    append(content.readUTF8Line() ?: return@buildString)
+                    while (isActive && !content.isClosedForRead) {
+                        val line = content.readUTF8Line() ?: break
+                        if (line.startsWith("data:"))
+                            appendLine(line.substringAfter("data:"))
+                        else if (line.isBlank())
+                            break
+                    }
                 }.trim()
 
-                if (line.startsWith("data:")) {
-                    send(json.parseToJsonElement(line.substringAfter("data:").trim()).jsonObject.getValue("value").jsonObject)
-                }
+                if (line.isNotBlank())
+                    send(json.parseToJsonElement(line).jsonObject.getValue("value").jsonObject)
             }
 
             call.response.cleanup()

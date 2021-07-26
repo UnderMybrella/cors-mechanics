@@ -3,16 +3,21 @@ package dev.brella.corsmechanics
 import com.github.benmanes.caffeine.cache.Caffeine
 import io.ktor.application.*
 import io.ktor.client.*
+import io.ktor.client.features.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.request.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.future.future
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
 sealed class BlaseballDataSource {
@@ -23,19 +28,90 @@ sealed class BlaseballDataSource {
             .shareIn(CorsMechanics, SharingStarted.Eagerly, 1)
     }
 
-    class Live(json: Json, http: HttpClient, scope: CoroutineScope) : BlaseballDataSource() {
-        override val eventStream: LiveData = LiveData(json, http, scope)
+    class Live(val json: Json, val http: HttpClient, val scope: CoroutineScope) : BlaseballDataSource() {
+        override val eventStream: LiveData by lazy {
+            LiveData(json, http, scope)
+        }
+
+        override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
+            scope.future {
+                http.get<HttpResponse>("https://www.blaseball.com/${proxyRequest.path}") {
+                    if (proxyPassHost != null) header("Host", proxyPassHost)
+                    if (passCookies) proxyRequest.cookies.forEach { cookie ->
+                        cookie(
+                            name = cookie.name,
+                            value = cookie.value,
+                            maxAge = cookie.maxAge,
+                            expires = cookie.expires,
+                            domain = cookie.domain,
+                            path = cookie.path,
+                            secure = cookie.secure,
+                            httpOnly = cookie.httpOnly,
+                            extensions = cookie.extensions
+                        )
+                    }
+                }.let { ProxiedResponse.proxyFrom(it, true) }
+            }
     }
 
-    class Blasement(json: Json, http: HttpClient, scope: CoroutineScope, instance: String) : BlaseballDataSource() {
-        override val eventStream: LiveData = LiveData(json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
+    class Blasement(val json: Json, val http: HttpClient, val scope: CoroutineScope, val instance: String) : BlaseballDataSource() {
+        override val eventStream: LiveData by lazy {
+            LiveData(json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
+        }
+
+        override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
+            scope.future {
+                http.get<HttpResponse>("https://blasement.brella.dev/leagues/$instance/${proxyRequest.path}") {
+                    if (proxyPassHost != null) header("Host", proxyPassHost)
+                    if (passCookies) proxyRequest.cookies.forEach { cookie ->
+                        cookie(
+                            name = cookie.name,
+                            value = cookie.value,
+                            maxAge = cookie.maxAge,
+                            expires = cookie.expires,
+                            domain = cookie.domain,
+                            path = cookie.path,
+                            secure = cookie.secure,
+                            httpOnly = cookie.httpOnly,
+                            extensions = cookie.extensions
+                        )
+                    }
+                }.let { ProxiedResponse.proxyFrom(it, true) }
+            }
     }
 
-    class Before(json: Json, http: HttpClient, scope: CoroutineScope, offset: Long) : BlaseballDataSource() {
-        override val eventStream: LiveData = LiveData(json, http, scope, endpoint = {
-            url("https://before.sibr.dev/events/streamData")
-            cookie("offset_sec", offset.toString())
-        })
+    class Before(val json: Json, val http: HttpClient, val scope: CoroutineScope, val offset: Long) : BlaseballDataSource() {
+        override val eventStream: LiveData by lazy {
+            LiveData(json, http, scope, endpoint = {
+                url("https://before.sibr.dev/events/streamData")
+                cookie("offset_sec", offset.toString())
+            })
+        }
+
+        override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
+            scope.future {
+                http.get<HttpResponse>("https://before.sibr.dev/${proxyRequest.path}") {
+                    cookie("offset_sec", offset.toString())
+                    timeout {
+                        connectTimeoutMillis = 20_000L
+                    }
+
+                    if (proxyPassHost != null) header("Host", proxyPassHost)
+                    if (passCookies) proxyRequest.cookies.forEach { cookie ->
+                        cookie(
+                            name = cookie.name,
+                            value = cookie.value,
+                            maxAge = cookie.maxAge,
+                            expires = cookie.expires,
+                            domain = cookie.domain,
+                            path = cookie.path,
+                            secure = cookie.secure,
+                            httpOnly = cookie.httpOnly,
+                            extensions = cookie.extensions
+                        )
+                    }
+                }.let { ProxiedResponse.proxyFrom(it, true) }
+            }
     }
 
     data class Instances(val json: Json, val http: HttpClient, val scope: CoroutineScope) {
@@ -43,10 +119,12 @@ sealed class BlaseballDataSource {
         private val blasement = Caffeine
             .newBuilder()
             .expireAfterAccess(1, TimeUnit.MINUTES)
+            .evictionListener<String, Blasement> { key, value, cause -> value?.eventStream?.updateJob?.cancel() }
             .build<String, Blasement> { instance -> Blasement(json, http, scope, instance) }
         private val before = Caffeine
             .newBuilder()
             .expireAfterAccess(1, TimeUnit.MINUTES)
+            .evictionListener<Long, Before> { key, value, cause -> value?.eventStream?.updateJob?.cancel() }
             .build<Long, Before> { offset -> Before(json, http, scope, offset) }
 
 
@@ -62,4 +140,6 @@ sealed class BlaseballDataSource {
                 ?.let(::before)
             ?: live()
     }
+
+    abstract fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse>
 }
