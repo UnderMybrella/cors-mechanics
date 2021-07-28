@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.3.0"
+version = "1.3.1"
 
 repositories {
     mavenCentral()
@@ -113,9 +113,9 @@ tasks.create<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfil
     copyFile(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFileName.get(), "/app/cors-mechanics.jar")
     copyFile("application.conf", "/app/application.conf")
     entryPoint("java")
-    defaultCommand("-jar", "/app/cors-mechanics.jar", "-config=/app/application.conf")
+    defaultCommand("-cp", "/app/cors-mechanics.jar:/usr/lib/", "io.ktor.server.netty.EngineMain", "-config=/app/application.conf")
     exposePort(8786)
-    runCommand("apk --update --no-cache add curl")
+    runCommand("apk --update --no-cache add curl jq-dev")
     instruction("HEALTHCHECK CMD curl -f http://localhost:8786/health || exit 1")
 }
 
