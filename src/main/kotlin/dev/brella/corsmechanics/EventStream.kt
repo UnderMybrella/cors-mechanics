@@ -18,35 +18,117 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import java.util.*
+import kotlin.collections.HashMap
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 import kotlin.math.pow
 import kotlin.random.Random
+import kotlin.time.Duration
+import kotlin.time.ExperimentalTime
 
-class LiveData(val id: String, val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: HttpRequestBuilder.() -> Unit = { url("https://www.blaseball.com/events/streamData") }) {
+sealed class EventStream(val id: String, val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: HttpRequestBuilder.() -> Unit = { url("https://www.blaseball.com/events/streamData") }) {
     companion object {
         val HASH_REGEX = "@[0-9a-f]{1,8}".toRegex()
+
+        private fun JsonElement.deepSort(): JsonElement =
+            when (this) {
+                is JsonObject -> JsonObject(mapValuesTo(TreeMap()) { (_, v) -> v.deepSort() })
+                is JsonArray -> JsonArray(map { it.deepSort() }.sortedWith { a, b -> compare(a, b) })
+                is JsonPrimitive -> this
+            }
+
+        private fun compare(a: JsonElement, b: JsonElement): Int =
+            when (a) {
+                is JsonObject -> {
+                    val comparingA = a["name"] ?: a["fullName"] ?: a["homeTeam"] ?: a["id"] ?: JsonNull
+
+                    when (b) {
+                        is JsonObject -> compare(comparingA, b["name"] ?: b["fullName"] ?: b["homeTeam"] ?: b["id"] ?: JsonNull)
+                        is JsonArray -> compare(comparingA, b.firstOrNull() ?: JsonNull)
+                        is JsonPrimitive -> compare(comparingA, b)
+                    }
+                }
+                is JsonArray -> when (b) {
+                    is JsonObject -> compare(a.firstOrNull() ?: JsonNull, b["name"] ?: b["fullName"] ?: b["homeTeam"] ?: b["id"] ?: JsonNull)
+                    is JsonArray -> compare(a.firstOrNull() ?: JsonNull, b.firstOrNull() ?: JsonNull)
+                    is JsonPrimitive -> compare(a.firstOrNull() ?: JsonNull, b)
+                }
+                is JsonPrimitive -> when (b) {
+                    is JsonObject -> compare(a, b["name"] ?: b["fullName"] ?: b["homeTeam"] ?: b["id"] ?: JsonNull)
+                    is JsonArray -> compare(a, b.firstOrNull() ?: JsonNull)
+                    is JsonPrimitive -> a.content.compareTo(b.content)
+                }
+            }
     }
     //    val simulationData: MutableList<BlaseballStreamData> = ArrayList()
 //    val games: MutableMap<GameID, BlaseballUpdatingGame> = HashMap()
 //    val chroniclerGames: MutableMap<GameID, Map<Int, BlaseballDatabaseGame>> = HashMap()
 
+    class FromEventSource(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, endpoint: HttpRequestBuilder.() -> Unit = { url("https://www.blaseball.com/events/streamData") }): EventStream(id, json, http, scope, context, endpoint)
+    class FromChronicler(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, val time: () -> String, endpoint: HttpRequestBuilder.() -> Unit = {}): EventStream(id, json, http, scope, context, endpoint) {
+        @OptIn(ExperimentalTime::class)
+        override suspend fun getLiveDataStream(): Flow<JsonObject> =
+            flow {
+                //Chronicler is a bit funky with streamData sometimes, so we need to set up a base element, and then populate that
+                val core: MutableMap<String, JsonElement> = HashMap()
+                val coreJson = JsonObject(core)
+
+                for (i in 0 until 8) {
+                    try {
+                        yield()
+
+                        http.getChroniclerVersionsBefore("stream", time(), endpoint)
+                            ?.forEach { streamData ->
+                                streamData
+                                    .getJsonObjectOrNull("value")
+                                    ?.forEach { (k, v) -> core.putIfAbsent(k, v) }
+                            } ?: continue
+
+                        break
+                    } catch (th: Throwable) {
+                        th.printStackTrace()
+                        delay((2.0.pow(i) * 1000).toLong() + Random.nextLong(1000))
+                        continue
+                    }
+                }
+
+                //loopEvery(league.updateInterval
+                loopEvery(Duration.seconds(5), { coroutineContext.isActive }) {
+                    (http.getChroniclerEntity("stream", time(), endpoint) as? JsonObject)
+                        ?.getJsonObjectOrNull("value")
+                        ?.forEach { (k, v) -> core[k] = v }
+
+                    emit(coreJson.deepSort() as? JsonObject ?: coreJson)
+                }
+            }
+    }
+
     val liveData = MutableSharedFlow<JsonObject>(1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val liveUpdates = MutableSharedFlow<JsonObject>(1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     //            url("http://localhost:9897/blaseball/accelerated/live_bait/events/streamData")
-    suspend fun getLiveDataStream(): Flow<JsonObject> {
+    open suspend fun getLiveDataStream(): Flow<JsonObject> {
         val call = http.executeStatement {
             method = HttpMethod.Get
             timeout {
@@ -103,7 +185,7 @@ class LiveData(val id: String, val json: Json, val http: HttpClient, val scope: 
 
                 while (isActive) {
                     try {
-                        withTimeout(120_000) {
+                        withTimeoutOrNull(120_000) {
                             getLiveDataStream()
                                 .onEach { event ->
                                     event.forEach { (k, v) -> updateData[k] = v }
@@ -115,9 +197,12 @@ class LiveData(val id: String, val json: Json, val http: HttpClient, val scope: 
                                     liveUpdates.emit(buildJsonObject {
                                         put("value", event)
                                     })
-                                }.launchIn(this)
+                                }
+                                .launchIn(this)
                                 .join()
                         }
+
+                        restartCount = (restartCount - 1).coerceAtLeast(0)
                     } catch (th: Throwable) {
                         val seen = failures.compute(th.message?.replace(HASH_REGEX, "@{hash}")) { _, i -> i?.plus(1) ?: 1 }
                         val delay = (2.0.pow(restartCount++).toLong().coerceAtMost(64) * 1000) + Random.nextLong(1000)

@@ -12,16 +12,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.future.future
+import kotlinx.datetime.Clock
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
+import kotlinx.datetime.minus
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
+import kotlin.time.ExperimentalTime
 
 sealed class BlaseballDataSource {
-    abstract val eventStream: LiveData
+    abstract val eventStream: EventStream
     val eventStringStream by lazy {
         eventStream.liveData
             .mapNotNull(JsonObject::toString)
@@ -29,8 +32,8 @@ sealed class BlaseballDataSource {
     }
 
     class Live(val json: Json, val http: HttpClient, val scope: CoroutineScope) : BlaseballDataSource() {
-        override val eventStream: LiveData by lazy {
-            LiveData("Live", json, http, scope)
+        override val eventStream: EventStream by lazy {
+            EventStream.FromEventSource("Live", json, http, scope)
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
@@ -55,8 +58,8 @@ sealed class BlaseballDataSource {
     }
 
     class Blasement(val json: Json, val http: HttpClient, val scope: CoroutineScope, val instance: String) : BlaseballDataSource() {
-        override val eventStream: LiveData by lazy {
-            LiveData("Blasement @ $instance", json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
+        override val eventStream: EventStream by lazy {
+            EventStream.FromEventSource("Blasement @ $instance", json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
@@ -81,11 +84,8 @@ sealed class BlaseballDataSource {
     }
 
     class Before(val json: Json, val http: HttpClient, val scope: CoroutineScope, val offset: Long) : BlaseballDataSource() {
-        override val eventStream: LiveData by lazy {
-            LiveData("Before @ $offset", json, http, scope, endpoint = {
-                url("https://before.sibr.dev/events/streamData")
-                cookie("offset_sec", offset.toString())
-            })
+        override val eventStream: EventStream by lazy {
+            EventStream.FromChronicler("Before @ $offset", json, http, scope, time = { Clock.System.now().minus(offset, DateTimeUnit.SECOND).toString() })
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
@@ -132,13 +132,19 @@ sealed class BlaseballDataSource {
         public fun blasement(instance: String) = blasement[instance]
         public fun before(offset: Long) = before[offset]
 
-        infix fun sourceFor(call: ApplicationCall): BlaseballDataSource =
-            call.request.header("X-Blasement-Instance")
-                ?.let(::blasement)
-            ?: call.request.header("X-Before-Offset")
-                ?.let { offset -> offset.toLongOrNull() ?: runCatching { Instant.parse(offset) }.getOrNull()?.epochSeconds }
-                ?.let(::before)
-            ?: live()
+        @OptIn(ExperimentalTime::class)
+        infix fun sourceFor(call: ApplicationCall): BlaseballDataSource {
+            val queryParams = call.request.queryParameters
+
+            return (call.request.header("X-Blasement-Instance") ?: queryParams["blasement_instance"])
+                       ?.let(::blasement)
+
+                   ?: (call.request.header("X-Before-Offset") ?: queryParams["before_offset"])
+                       ?.toLongOrNull()
+                       ?.let(::before)
+
+                   ?: live()
+        }
     }
 
     abstract fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse>
