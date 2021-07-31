@@ -32,9 +32,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -361,7 +359,7 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
         get("/streamData") {
             val dataSource = dataSources sourceFor call
             call.respondTextWriter(ContentType.Text.EventStream) {
-                if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+                dataSource.eventStream.relaunchJobIfNeeded().join()
 
                 val job = dataSource.eventStringStream.onEach { data ->
                     withContext(Dispatchers.IO) {
@@ -387,7 +385,7 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
             val path = call.parameters.getAll("path") ?: emptyList()
 
             call.respondTextWriter(ContentType.Text.EventStream) {
-                if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+                dataSource.eventStream.relaunchJobIfNeeded().join()
 
                 val job = dataSource.eventStream.liveData.onEach { data ->
                     withContext(Dispatchers.IO) {
@@ -410,7 +408,7 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
 
         post<String>("/streamData/jq") { filter ->
             val dataSource = dataSources sourceFor call
-            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+            dataSource.eventStream.relaunchJobIfNeeded().join()
 
             call.respondTextWriter(ContentType.Text.EventStream) {
                 val job = dataSource.eventStringStream.onEach { data ->
@@ -445,7 +443,7 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
 
         webSocket("/streamSocket") {
             val dataSource = dataSources sourceFor call
-            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+            dataSource.eventStream.relaunchJobIfNeeded().join()
 
             val format = call.request.queryParameters["format"]
             val wait = call.request.queryParameters["wait"]?.toBooleanStrictOrNull() ?: false

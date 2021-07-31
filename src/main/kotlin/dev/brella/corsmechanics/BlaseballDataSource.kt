@@ -30,7 +30,7 @@ sealed class BlaseballDataSource {
 
     class Live(val json: Json, val http: HttpClient, val scope: CoroutineScope) : BlaseballDataSource() {
         override val eventStream: LiveData by lazy {
-            LiveData(json, http, scope)
+            LiveData("Live", json, http, scope)
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
@@ -56,7 +56,7 @@ sealed class BlaseballDataSource {
 
     class Blasement(val json: Json, val http: HttpClient, val scope: CoroutineScope, val instance: String) : BlaseballDataSource() {
         override val eventStream: LiveData by lazy {
-            LiveData(json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
+            LiveData("Blasement @ $instance", json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
@@ -82,7 +82,7 @@ sealed class BlaseballDataSource {
 
     class Before(val json: Json, val http: HttpClient, val scope: CoroutineScope, val offset: Long) : BlaseballDataSource() {
         override val eventStream: LiveData by lazy {
-            LiveData(json, http, scope, endpoint = {
+            LiveData("Before @ $offset", json, http, scope, endpoint = {
                 url("https://before.sibr.dev/events/streamData")
                 cookie("offset_sec", offset.toString())
             })
@@ -119,12 +119,12 @@ sealed class BlaseballDataSource {
         private val blasement = Caffeine
             .newBuilder()
             .expireAfterAccess(1, TimeUnit.MINUTES)
-            .evictionListener<String, Blasement> { key, value, cause -> value?.eventStream?.updateJob?.cancel() }
+            .evictionListener<String, Blasement> { key, value, cause -> value?.eventStream?.cancelUpdateJob() }
             .build<String, Blasement> { instance -> Blasement(json, http, scope, instance) }
         private val before = Caffeine
             .newBuilder()
             .expireAfterAccess(1, TimeUnit.MINUTES)
-            .evictionListener<Long, Before> { key, value, cause -> value?.eventStream?.updateJob?.cancel() }
+            .evictionListener<Long, Before> { key, value, cause -> value?.eventStream?.cancelUpdateJob() }
             .build<Long, Before> { offset -> Before(json, http, scope, offset) }
 
 

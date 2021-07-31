@@ -1,5 +1,8 @@
 package dev.brella.corsmechanics
 
+import dev.brella.kornea.toolkit.coroutines.ReadWriteSemaphore
+import dev.brella.kornea.toolkit.coroutines.withReadPermit
+import dev.brella.kornea.toolkit.coroutines.withWritePermit
 import dev.brella.ktornea.common.cleanup
 import dev.brella.ktornea.common.executeStatement
 import io.ktor.client.*
@@ -10,7 +13,9 @@ import io.ktor.http.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.channelFlow
@@ -26,8 +31,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlin.coroutines.CoroutineContext
+import kotlin.math.pow
+import kotlin.random.Random
 
-class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: HttpRequestBuilder.() -> Unit = { url("https://www.blaseball.com/events/streamData") }) {
+class LiveData(val id: String, val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: HttpRequestBuilder.() -> Unit = { url("https://www.blaseball.com/events/streamData") }) {
+    companion object {
+        val HASH_REGEX = "@[0-9a-f]{1,8}".toRegex()
+    }
     //    val simulationData: MutableList<BlaseballStreamData> = ArrayList()
 //    val games: MutableMap<GameID, BlaseballUpdatingGame> = HashMap()
 //    val chroniclerGames: MutableMap<GameID, Map<Int, BlaseballDatabaseGame>> = HashMap()
@@ -72,48 +82,57 @@ class LiveData(val json: Json, val http: HttpClient, val scope: CoroutineScope, 
         }
     }
 
-    var updateJob: Job? = null
+    private var updateJob: Job? = null
+    private val semaphore: ReadWriteSemaphore = ReadWriteSemaphore(16)
 
-    fun relaunchJob() {
-        println("RELAUNCHING")
+    fun cancelUpdateJob() = scope.launch(context) { semaphore.withWritePermit { updateJob?.cancelAndJoin() } }
+    fun relaunchJobIfNeeded() = scope.launch(context) {
+        semaphore.withReadPermit { if (updateJob?.isActive == true) return@launch }
+        semaphore.withWritePermit {
+            println("RELAUNCHING $id")
 
-        liveData.resetReplayCache()
-        liveUpdates.resetReplayCache()
+            liveData.resetReplayCache()
+            liveUpdates.resetReplayCache()
 
-        updateJob?.cancel()
-        updateJob = scope.launch(context) {
-            val updateData: MutableMap<String, JsonElement> = HashMap()
-            val updateJson = JsonObject(updateData)
-            val failures: MutableMap<String?, Int> = HashMap()
+            updateJob?.cancelAndJoin()
+            updateJob = scope.launch(context) {
+                val updateData: MutableMap<String, JsonElement> = HashMap()
+                val updateJson = JsonObject(updateData)
+                val failures: MutableMap<String?, Int> = HashMap()
+                var restartCount: Int = 0
 
-            while (isActive) {
-                try {
-                    withTimeout(120_000) {
-                        getLiveDataStream()
-                            .onEach { event ->
-                                event.forEach { (k, v) -> updateData[k] = v }
+                while (isActive) {
+                    try {
+                        withTimeout(120_000) {
+                            getLiveDataStream()
+                                .onEach { event ->
+                                    event.forEach { (k, v) -> updateData[k] = v }
 
-                                liveData.emit(buildJsonObject {
-                                    put("value", updateJson)
-                                })
+                                    liveData.emit(buildJsonObject {
+                                        put("value", updateJson)
+                                    })
 
-                                liveUpdates.emit(buildJsonObject {
-                                    put("value", event)
-                                })
-                            }.launchIn(this)
-                            .join()
+                                    liveUpdates.emit(buildJsonObject {
+                                        put("value", event)
+                                    })
+                                }.launchIn(this)
+                                .join()
+                        }
+                    } catch (th: Throwable) {
+                        val seen = failures.compute(th.message?.replace(HASH_REGEX, "@{hash}")) { _, i -> i?.plus(1) ?: 1 }
+                        val delay = (2.0.pow(restartCount++).toLong().coerceAtMost(64) * 1000) + Random.nextLong(1000)
+
+                        println("[${id}] Starting back up (Seen this error $seen times); waiting $delay ms...")
+                        th.printStackTrace()
+
+                        delay(delay)
                     }
-                } catch (th: Throwable) {
-                    th.printStackTrace()
-                    val seen = failures.compute(th.message) { _, i -> i?.plus(1) ?: 1 }
-
-                    println("Starting back up (Seen this error $seen times)...")
                 }
             }
         }
     }
 
     init {
-        relaunchJob()
+        relaunchJobIfNeeded()
     }
 }

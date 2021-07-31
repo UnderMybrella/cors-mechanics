@@ -14,7 +14,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -944,7 +943,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
         jsonExplorer("/stream") {
             val dataSource = dataSources sourceFor this
-            if (dataSource.eventStream.updateJob?.isActive != true) dataSource.eventStream.relaunchJob()
+            dataSource.eventStream.relaunchJobIfNeeded().join()
 
             dataSource.eventStream.liveData.first().getJsonObject("value")
         }
