@@ -300,7 +300,15 @@ val SEASON_STREAM_QUERY_TIMES = arrayOf(
     "2021-05-23T00:00:00Z"
 )
 
-data class PlayerRequest(val players: List<String>, val time: String?, val backing: CompletableDeferred<Map<String, JsonObject>> = CompletableDeferred()): CompletableDeferred<Map<String, JsonObject>> by backing
+data class PlayerRequest(val players: List<String>, val time: String?, val backing: CompletableDeferred<Map<String, JsonObject>> = CompletableDeferred()) : CompletableDeferred<Map<String, JsonObject>> by backing
+
+@Serializable
+data class TimeMapWrapper(val data: List<TimeMap>)
+
+@Serializable
+data class TimeMap(val season: Int, val tournament: Int, val day: Int, val type: String?, val startTime: Instant, val endTime: Instant?) {
+    operator fun contains(moment: Instant): Boolean = moment >= startTime && (endTime == null || moment < endTime)
+}
 
 @OptIn(ExperimentalStdlibApi::class)
 fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: BlaseballDataSource.Instances) {
@@ -348,6 +356,40 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
         PLAYERS.send(this)
         return await()
     }
+
+    val TIME_MAPS = Caffeine.newBuilder()
+        .expireAfterAccess(10, TimeUnit.MINUTES)
+        .buildCoroutines<Unit, List<TimeMap>> { httpClient.get<TimeMapWrapper>("https://api.sibr.dev/chronicler/v1/time/map").data }
+
+    val TIME_MAPS_BY_SEASON = Caffeine.newBuilder()
+        .expireAfterAccess(10, TimeUnit.MINUTES)
+        .buildCoroutines<Int, List<TimeMap>> { key -> TIME_MAPS[Unit].await().filter { map -> map.season == key } }
+
+    val TIME_MAPS_BY_SEASON_AND_DAY = Caffeine.newBuilder()
+        .expireAfterAccess(10, TimeUnit.MINUTES)
+        .buildCoroutines<Int, List<TimeMap>> { key ->
+            val season = ((key shr 16) and 0xFF).toByte().toInt() //Hack for negatives
+            val day = key and 0xFFFF
+            TIME_MAPS_BY_SEASON[season].await().filter { map -> map.day == day }
+        }
+
+    val TIME_MAPS_BY_SEASON_DAY_AND_TOURNAMENT = Caffeine.newBuilder()
+        .expireAfterAccess(10, TimeUnit.MINUTES)
+        .buildCoroutines<Int, List<TimeMap>> { key ->
+            val tournament = ((key shr 24) and 0xFF).toByte().toInt() //Hack for negatives
+            TIME_MAPS_BY_SEASON_AND_DAY[key].await().filter { map -> map.tournament == tournament }
+        }
+
+    val TIME_MAPS_BY_TIME = Caffeine.newBuilder()
+        .expireAfterAccess(1, TimeUnit.MINUTES)
+        .maximumSize(500)
+        .buildCoroutines<String?, List<TimeMap>> { key ->
+            val time =
+                if (key == null || key == "NOW") Clock.System.now()
+                else runCatching { Instant.parse(key) }.getOrElse { Clock.System.now() }
+
+            TIME_MAPS[Unit].await().filter { time in it }
+        }
 
     val TEAMS = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
@@ -927,6 +969,26 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
         withJsonExplorer("/season/by_number/{id}") {
             SEASON_BY_NUMBER[parameters.getOrFail("id")].await()
+        }
+
+        withJsonExplorer("/time/season/{season}") {
+            TIME_MAPS_BY_SEASON[parameters.getOrFail("season").toInt()].await()
+        }
+
+        withJsonExplorer("/time/season/{season}/day/{day}") {
+            TIME_MAPS_BY_SEASON_AND_DAY[(parameters.getOrFail("season").toByte().toInt() shl 16) or (parameters.getOrFail("day").toInt())].await()
+        }
+
+        withJsonExplorer("/time/season/{season}/day/{day}/tournament/{tournament}") {
+            TIME_MAPS_BY_SEASON_DAY_AND_TOURNAMENT[
+                    (parameters.getOrFail("tournament").toByte().toInt() shl 24) or
+                            (parameters.getOrFail("season").toByte().toInt() shl 16) or
+                            (parameters.getOrFail("day").toInt())
+            ].await()
+        }
+
+        withJsonExplorer("/time/within") {
+            TIME_MAPS_BY_TIME[request.queryParameters["at"] ?: "NOW"].await()
         }
 
         get("/database/willResults") {
