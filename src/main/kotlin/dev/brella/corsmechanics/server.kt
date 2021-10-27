@@ -207,7 +207,7 @@ fun ApplicationCall.buildProxiedRoute(): String? {
 //    .expireAfterWrite(1, TimeUnit.SECONDS)
 //    .buildAsync<String, ProxiedResponse> { key, executor ->
 //        CorsMechanics.future {
-//            http.get<HttpResponse>("https://www.blaseball.com/$key")
+//            http.get<HttpResponse>("https://api.blaseball.com/$key")
 //                .let { ProxiedResponse.proxyFrom(it) }
 //        }
 //    }
@@ -272,7 +272,7 @@ fun Application.module(testing: Boolean = false) {
             val cache: AsyncLoadingCache<ProxyRequest, ProxiedResponse> =
                 defaultCacheBuilder
                     .buildAsync { key, executor ->
-                        if (key.source != null && proxyPass == "https://www.blaseball.com")
+                        if (key.source != null && proxyPass == "https://api.blaseball.com")
                             key.source.buildRequest(key, executor, proxyPassHost, passCookies)
                         else
                             CorsMechanics.future {
@@ -348,6 +348,7 @@ fun Application.module(testing: Boolean = false) {
             }
         }
 
+        route("/api.blaseball.com") { blaseballEventStreamHandler(dataSources) }
         route("/www.blaseball.com") { blaseballEventStreamHandler(dataSources) }
         route("/blaseball.com") { blaseballEventStreamHandler(dataSources) }
         route("/blaseball") { blaseballEventStreamHandler(dataSources) }

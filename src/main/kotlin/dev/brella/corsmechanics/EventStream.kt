@@ -47,7 +47,7 @@ import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.ExperimentalTime
 
-sealed class EventStream(val id: String, val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: HttpRequestBuilder.() -> Unit = { url("https://www.blaseball.com/events/streamData") }) {
+sealed class EventStream(val id: String, val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: HttpRequestBuilder.() -> Unit = { url("https://api.blaseball.com/events/streamData") }) {
     companion object {
         val HASH_REGEX = "@[0-9a-f]{1,8}".toRegex()
 
@@ -85,7 +85,7 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
 //    val games: MutableMap<GameID, BlaseballUpdatingGame> = HashMap()
 //    val chroniclerGames: MutableMap<GameID, Map<Int, BlaseballDatabaseGame>> = HashMap()
 
-    class FromEventSource(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, endpoint: HttpRequestBuilder.() -> Unit = { url("https://www.blaseball.com/events/streamData") }): EventStream(id, json, http, scope, context, endpoint)
+    class FromEventSource(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, endpoint: HttpRequestBuilder.() -> Unit = { url("https://api.blaseball.com/events/streamData") }): EventStream(id, json, http, scope, context, endpoint)
     class FromChronicler(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, val time: () -> String, endpoint: HttpRequestBuilder.() -> Unit = {}): EventStream(id, json, http, scope, context, endpoint) {
         @OptIn(ExperimentalTime::class)
         override suspend fun getLiveDataStream(): Flow<JsonObject> =

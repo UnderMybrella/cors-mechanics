@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.4.0"
+version = "1.4.1"
 
 repositories {
     mavenCentral()
@@ -139,23 +139,3 @@ tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImag
 
     images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:latest")
 }
-
-
-/*
-docker {
-    javaApplication {
-        baseImage.set("azul/zulu-openjdk-alpine:11-jre")
-        maintainer.set("UnderMybrella \"docker@brella.dev\"")
-        ports.set(listOf(8786))
-        images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:latest")
-        jvmArgs.addAll("-config=/app/application.conf")
-    }
-}
-
-tasks.named<Sync>("dockerSyncBuildContext") {
-    from("application.conf")
-}
-
-tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("dockerCreateDockerfile") {
-    copyFile("application.conf", "/app/application.conf")
-}*/

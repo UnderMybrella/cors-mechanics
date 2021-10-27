@@ -108,6 +108,15 @@ class SiteFileRoutes(val application: Application, val httpClient: HttpClient) {
                 .associateBy(BlaseballAttribute::id)
         }
 
+    val WEATHER_BY_TIME = Caffeine.newBuilder()
+        .expireAfterAccess(5, TimeUnit.MINUTES)
+        .buildCoroutines<String, Map<String, BlaseballAttribute>> { time ->
+            val latestCommit = LATEST_COMMIT_FOR_FILE[time to "data/attributes.json"].await()
+
+            return@buildCoroutines httpClient.getJsonFromRaw<List<BlaseballAttribute>>("https://raw.githubusercontent.com/xSke/blaseball-site-files/${latestCommit.sha}/data/attributes.json")!!
+                .associateBy(BlaseballAttribute::id)
+        }
+
     val FROM_SITE_BY_TIME = Caffeine.newBuilder()
         .expireAfterWrite(5, TimeUnit.MINUTES)
         .buildCoroutines<Pair<String?, String>, ProxiedResponse> { pair ->
@@ -147,7 +156,6 @@ class SiteFileRoutes(val application: Application, val httpClient: HttpClient) {
                 get("/attributes/by_time") {
                     call.respond(ATTRIBUTES_BY_TIME[call.request.queryParameters["time"] ?: "NOW"].await())
                 }
-
                 get("/attributes/by_time/{id}") {
                     val id = call.parameters["id"] ?: return@get
                     val attributes = ATTRIBUTES_BY_TIME[call.request.queryParameters["time"] ?: "NOW"].await()

@@ -38,7 +38,7 @@ sealed class BlaseballDataSource {
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
             scope.future {
-                http.get<HttpResponse>("https://www.blaseball.com/${proxyRequest.path}") {
+                http.get<HttpResponse>("https://api.blaseball.com/${proxyRequest.path}") {
                     if (proxyPassHost != null) header("Host", proxyPassHost)
                     if (passCookies) proxyRequest.cookies.forEach { cookie ->
                         cookie(
