@@ -37,7 +37,9 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
+import java.io.File
 import java.util.*
 import kotlin.collections.HashMap
 import kotlin.coroutines.CoroutineContext
@@ -127,6 +129,9 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
     val liveData = MutableSharedFlow<JsonObject>(1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val liveUpdates = MutableSharedFlow<JsonObject>(1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
+    var lineCount = 0
+    val dir = File("eventStream").also(File::mkdirs)
+
     //            url("http://localhost:9897/blaseball/accelerated/live_bait/events/streamData")
     open suspend fun getLiveDataStream(): Flow<JsonObject> {
         val call = http.executeStatement {
@@ -145,6 +150,8 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
             else
                 call.response.content
 
+            var origin: MutableJsonObject? = null
+
             while (isActive && !content.isClosedForRead) {
                 val line = buildString {
                     while (isActive && !content.isClosedForRead) {
@@ -156,8 +163,22 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
                     }
                 }.trim()
 
-                if (line.isNotBlank())
-                    send(json.parseToJsonElement(line).jsonObject.getValue("value").jsonObject)
+                if (line.isNotBlank()) {
+                    val element = json.parseToJsonElement(line).jsonObject
+                    val value = element.getJsonObjectOrNull("value")
+                    val delta = element.getJsonArrayOrNull("delta")
+
+                    if (value != null) origin = value.toMutable() as? MutableJsonObject
+                    if (delta != null && origin != null) DeepDiff.mutateFromDiff(null, origin, json.decodeFromJsonElement<List<DeepDiff.DeltaRecord>>(delta).reversed(), null)
+
+                    File(dir, "${lineCount}.json").writeText(line)
+                    File(dir, "${lineCount}_diffed.json").writeText(origin?.toJson()?.toString() ?: "null")
+
+                    lineCount++
+
+                    origin?.toJson()?.let { send(it) }
+//                    send(json.parseToJsonElement(line).jsonObject.getValue("value").jsonObject)
+                }
             }
 
             call.response.cleanup()
