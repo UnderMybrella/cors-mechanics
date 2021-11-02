@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.4.4-EXPERIMENTAL"
+version = "1.4.5-EXPERIMENTAL"
 
 val latestTag = "latest-experimental"
 

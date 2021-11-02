@@ -117,7 +117,7 @@ object DeepDiff {
 
             when (delta.kind) {
                 Kind.NEWLY_ADDED -> {
-                    println("NEW $delta")
+//                    println("NEW $delta")
 
                     if (deltaParent == null) {
                         println("Can't add rhs to null parent for $deltaOrigin")
@@ -146,7 +146,7 @@ object DeepDiff {
                     }
                 }
                 Kind.DELETED -> {
-                    println("DELETED $delta")
+//                    println("DELETED $delta")
 
                     if (deltaParent == null) {
                         println("Can't delete from null parent for $deltaOrigin")
@@ -170,7 +170,7 @@ object DeepDiff {
                     }
                 }
                 Kind.EDITED -> {
-                    println("EDITED $delta")
+//                    println("EDITED $delta")
 
                     val rhs = delta.rhs?.toMutable() ?: MutableJsonNull
                     if (deltaOrigin is MutableJsonObject && rhs is MutableJsonObject) {
@@ -209,7 +209,7 @@ object DeepDiff {
                     }
                 }
                 Kind.ARRAY -> {
-                    println("ARRAY $delta")
+//                    println("ARRAY $delta")
 
                     if (deltaOrigin !is MutableJsonArray) println("Can't do an array operation on $delta")
                     else {
