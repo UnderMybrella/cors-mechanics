@@ -171,9 +171,6 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
                     if (value != null) origin = value.toMutable() as? MutableJsonObject
                     if (delta != null && origin != null) DeepDiff.mutateFromDiff(null, origin, json.decodeFromJsonElement<List<DeepDiff.DeltaRecord>>(delta).reversed(), null)
 
-                    File(dir, "${lineCount}.json").writeText(line)
-                    File(dir, "${lineCount}_diffed.json").writeText(origin?.toJson()?.toString() ?: "null")
-
                     lineCount++
 
                     origin?.toJson()?.let { send(it) }

@@ -12,7 +12,9 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.4.2-EXPERIMENTAL"
+version = "1.4.4-EXPERIMENTAL"
+
+val latestTag = "latest-experimental"
 
 repositories {
     mavenCentral()
@@ -137,5 +139,12 @@ tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImag
     dependsOn("createDockerfile")
     inputDir.set(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
 
-    images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:latest")
+    images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:$latestTag")
+}
+
+tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerPushImage>("pushImage") {
+    group = "docker"
+    dependsOn("buildImage")
+
+    images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:$latestTag")
 }
