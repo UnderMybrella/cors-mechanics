@@ -211,7 +211,7 @@ object DeepDiff {
                 Kind.ARRAY -> {
 //                    println("ARRAY $delta")
 
-                    if (deltaOrigin !is MutableJsonArray) println("Can't do an array operation on $delta")
+                    if (deltaOrigin !is MutableJsonArray) println("Can't do an array operation ($delta) on $deltaOrigin")
                     else {
                         val item = delta.item
                         val index = delta.index
