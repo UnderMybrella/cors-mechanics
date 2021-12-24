@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.5.0"
-    kotlin("plugin.serialization") version "1.5.0"
+    kotlin("jvm") version "1.6.0"
+    kotlin("plugin.serialization") version "1.6.0"
     id("com.github.johnrengelman.shadow") version "7.0.0"
     application
 
@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.4.6-EXPERIMENTAL"
+version = "1.4.7-EXPERIMENTAL"
 
 val latestTag = "latest-experimental"
 
@@ -24,9 +24,9 @@ repositories {
 dependencies {
     testImplementation(kotlin("test-junit"))
 
-    val ktor_version = "1.6.0"
+    val ktor_version = "1.6.4"
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.2.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.3.1")
 
     implementation("io.ktor:ktor-server-netty:$ktor_version")
     implementation("io.ktor:ktor-serialization:$ktor_version") {
@@ -55,13 +55,13 @@ dependencies {
     implementation("dev.brella:kornea-errors:2.2.0-alpha")
     implementation("dev.brella:ktornea-utils:1.3.3-alpha")
 
-    implementation("com.github.ben-manes.caffeine:caffeine:3.0.1")
-    implementation("ch.qos.logback:logback-classic:1.2.3")
+    implementation("com.github.ben-manes.caffeine:caffeine:3.0.4")
+    implementation("ch.qos.logback:logback-classic:1.2.7")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.5.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.5.2")
 
-    implementation("com.arakelian:java-jq:1.1.0")
+    implementation("com.arakelian:java-jq:1.2.0")
 
     implementation("dev.brella:kornea-blaseball-base:2.3.5-alpha")
     implementation("dev.brella:kornea-blaseball-api:2.3.1-alpha") {

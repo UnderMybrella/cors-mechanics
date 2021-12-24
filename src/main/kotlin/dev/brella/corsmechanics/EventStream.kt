@@ -11,34 +11,10 @@ import io.ktor.client.features.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.utils.io.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.shareIn
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.yield
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.jsonObject
+import kotlinx.coroutines.flow.*
+import kotlinx.serialization.json.*
 import java.io.File
 import java.util.*
 import kotlin.collections.HashMap
@@ -47,9 +23,17 @@ import kotlin.coroutines.coroutineContext
 import kotlin.math.pow
 import kotlin.random.Random
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
 
-sealed class EventStream(val id: String, val json: Json, val http: HttpClient, val scope: CoroutineScope, val context: CoroutineContext = scope.coroutineContext, val endpoint: HttpRequestBuilder.() -> Unit = { url("https://api.blaseball.com/events/streamData") }) {
+sealed class EventStream(
+    val id: String,
+    val json: Json,
+    val http: HttpClient,
+    val scope: CoroutineScope,
+    val context: CoroutineContext = scope.coroutineContext,
+    val endpoint: HttpRequestBuilder.() -> Unit = { url("https://api.blaseball.com/events/streamData") }
+) {
     companion object {
         val HASH_REGEX = "@[0-9a-f]{1,8}".toRegex()
 
@@ -87,25 +71,64 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
 //    val games: MutableMap<GameID, BlaseballUpdatingGame> = HashMap()
 //    val chroniclerGames: MutableMap<GameID, Map<Int, BlaseballDatabaseGame>> = HashMap()
 
-    class FromEventSource(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, endpoint: HttpRequestBuilder.() -> Unit = { url("https://api.blaseball.com/events/streamData") }): EventStream(id, json, http, scope, context, endpoint)
-    class FromChronicler(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, val time: () -> String, endpoint: HttpRequestBuilder.() -> Unit = {}): EventStream(id, json, http, scope, context, endpoint) {
+    class FromEventSource(
+        id: String,
+        json: Json,
+        http: HttpClient,
+        scope: CoroutineScope,
+        context: CoroutineContext = scope.coroutineContext,
+        endpoint: HttpRequestBuilder.() -> Unit = { url("https://api.blaseball.com/events/streamData") }
+    ) : EventStream(id, json, http, scope, context, endpoint)
+
+    class FromChronicler(id: String, json: Json, http: HttpClient, scope: CoroutineScope, context: CoroutineContext = scope.coroutineContext, val time: () -> String, endpoint: HttpRequestBuilder.() -> Unit = {}) : EventStream(
+        id,
+        json,
+        http,
+        scope,
+        context,
+        endpoint
+    ) {
         @OptIn(ExperimentalTime::class)
         override suspend fun getLiveDataStream(): Flow<JsonObject> =
             flow {
                 //Chronicler is a bit funky with streamData sometimes, so we need to set up a base element, and then populate that
                 val core: MutableMap<String, JsonElement> = HashMap()
-                val coreJson = JsonObject(core)
+                val coreJson = buildJsonObject {
+                    put("value", JsonObject(core))
+                }
+
+                var lastTime: String = time()
 
                 for (i in 0 until 8) {
                     try {
                         yield()
+                        lastTime = time()
 
-                        http.getChroniclerVersionsBefore("stream", time(), endpoint)
-                            ?.forEach { streamData ->
+                        val versions = http.getChroniclerVersionsBefore("stream", lastTime, endpoint)?.reversed() ?: continue
+
+                        if (versions.any { it.contains("delta") }) {
+                            val lastIndex = versions.indexOfLast { it.contains("value") }
+                            for (index in lastIndex until versions.size) {
+                                val streamData = versions[index]
+                                val value = streamData.getJsonObjectOrNull("value")
+
+                                if (value != null) {
+                                    value.forEach { (k, v) -> core[k] = v }
+
+                                    emit(coreJson.deepSort() as? JsonObject ?: coreJson)
+                                } else {
+                                    emit(streamData)
+                                }
+                            }
+                        } else {
+                            versions.forEach { streamData ->
                                 streamData
                                     .getJsonObjectOrNull("value")
                                     ?.forEach { (k, v) -> core.putIfAbsent(k, v) }
-                            } ?: continue
+                            }
+
+                            emit(coreJson.deepSort() as? JsonObject ?: coreJson)
+                        }
 
                         break
                     } catch (th: Throwable) {
@@ -116,12 +139,24 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
                 }
 
                 //loopEvery(league.updateInterval
-                loopEvery(Duration.seconds(5), { coroutineContext.isActive }) {
-                    (http.getChroniclerEntity("stream", time(), endpoint) as? JsonObject)
-                        ?.getJsonObjectOrNull("value")
-                        ?.forEach { (k, v) -> core[k] = v }
+                loopEvery(5.seconds, { currentCoroutineContext().isActive }) {
+                    val now = time()
 
-                    emit(coreJson.deepSort() as? JsonObject ?: coreJson)
+                    try {
+                        http.getChroniclerVersionsBetween("stream", before = now, after = lastTime, endpoint)?.forEach { streamData ->
+                            val value = streamData.getJsonObjectOrNull("value")
+
+                            if (value != null) {
+                                value.forEach { (k, v) -> core[k] = v }
+
+                                emit(coreJson.deepSort() as? JsonObject ?: coreJson)
+                            } else {
+                                emit(streamData)
+                            }
+                        }
+                    } finally {
+                        lastTime = now
+                    }
                 }
             }
     }
@@ -143,6 +178,7 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
             endpoint()
         }
         if (!call.response.status.isSuccess()) return emptyFlow()
+        if (call.response.contentLength() == 0L) return emptyFlow()
 
         return channelFlow {
             val content = if (call.response.headers[HttpHeaders.ContentEncoding] == "gzip")
@@ -155,6 +191,8 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
             while (isActive && !content.isClosedForRead) {
                 val line = buildString {
                     while (isActive && !content.isClosedForRead) {
+                        content.awaitContent()
+
                         val line = content.readUTF8Line() ?: break
                         if (line.startsWith("data:"))
                             appendLine(line.substringAfter("data:"))
@@ -164,16 +202,7 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
                 }.trim()
 
                 if (line.isNotBlank()) {
-                    val element = json.parseToJsonElement(line).jsonObject
-                    val value = element.getJsonObjectOrNull("value")
-                    val delta = element.getJsonArrayOrNull("delta")
-
-                    if (value != null) origin = value.toMutable() as? MutableJsonObject
-                    if (delta != null && origin != null) DeepDiff.mutateFromDiff(null, origin, json.decodeFromJsonElement<List<DeepDiff.DeltaRecord>>(delta).reversed(), null)
-
-                    lineCount++
-
-                    origin?.toJson()?.let { send(it) }
+                    send(json.parseToJsonElement(line).jsonObject)
 //                    send(json.parseToJsonElement(line).jsonObject.getValue("value").jsonObject)
                 }
             }
@@ -204,17 +233,33 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
                 while (isActive) {
                     try {
                         withTimeoutOrNull(120_000) {
+                            var origin: MutableJsonObject? = null
+
                             getLiveDataStream()
-                                .onEach { event ->
-                                    event.forEach { (k, v) -> updateData[k] = v }
+                                .onEach { element ->
+                                    val value = element.getJsonObjectOrNull("value")
+                                    val delta = element.getJsonArrayOrNull("delta")
 
-                                    liveData.emit(buildJsonObject {
-                                        put("value", updateJson)
-                                    })
+                                    if (value != null) {
+                                        origin = value.toMutable() as? MutableJsonObject
+                                    }
 
-                                    liveUpdates.emit(buildJsonObject {
-                                        put("value", event)
-                                    })
+                                    origin?.let {
+                                        if (delta != null) {
+//                                            DeepDiff.mutateFromDiff(null, it, json.decodeFromJsonElement(delta), null)
+                                            JsonPatch.mutateFromPatch(it, json.decodeFromJsonElement(delta))
+                                        }
+                                    }
+
+//                                    event.forEach { (k, v) -> updateData[k] = v }
+
+                                    origin?.let {
+                                        liveData.emit(buildJsonObject {
+                                            put("value", it.toJson())
+                                        })
+                                    }
+
+                                    liveUpdates.emit(element)
                                 }
                                 .launchIn(this)
                                 .join()
@@ -237,5 +282,24 @@ sealed class EventStream(val id: String, val json: Json, val http: HttpClient, v
 
     init {
         relaunchJobIfNeeded()
+
+        scope.launch(context) {
+            val gamesDir = File("games")
+            gamesDir.mkdirs()
+
+            val map: MutableMap<String, Int> = HashMap()
+
+            liveData.onEach { json ->
+                json.getJsonObject("value")
+                    .getJsonObject("games")
+                    .getJsonArray("schedule")
+                    .filterIsInstance<JsonObject>()
+                    .forEach { game ->
+                        val gameID = game.getString("id")
+                        val playCount = game.getJsonPrimitive("playCount").int
+                        if ((map[gameID] ?: 0) < playCount) File(gamesDir, "$gameID.txt").appendText("${playCount.toString().padStart(3, ' ')}: ${game.getString("lastUpdate")}")
+                    }
+            }.launchIn(this).join()
+        }
     }
 }

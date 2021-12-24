@@ -69,48 +69,64 @@ object DeepDiff {
         val item: DeltaRecord? = null
     )
 
+    sealed class MissedPacketException(message: String?): IllegalStateException(message) {
+        data class CantNavigateToKey(val key: String, val deltaPath: List<MutableJsonElement<*>>, val delta: DeltaRecord): MissedPacketException("Can't navigate to key $key of ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }}") {
+            override fun toString(): String = super.toString()
+        }
+        data class CantNavigateToIndex(val index: Int, val deltaPath: List<MutableJsonElement<*>>, val delta: DeltaRecord): MissedPacketException("Can't navigate to index $index of ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }}") {
+            override fun toString(): String = super.toString()
+        }
+        data class CantNavigateToPath(val path: List<PathIndex>, val deltaPath: List<MutableJsonElement<*>>, val delta: DeltaRecord): MissedPacketException("Can't navigate to ${path.joinToString("/") { it.keyPath ?: it.indexPath.toString() }} of ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }}") {
+            override fun toString(): String = super.toString()
+        }
+    }
+
     fun mutateFromDiff(parent: MutableJsonElement<*>? = null, origin: MutableJsonElement<*>, records: List<DeltaRecord>, index: PathIndex? = null) {
         records.forEach { delta ->
-            var deltaParent: MutableJsonElement<*>? = parent
-            var deltaOrigin: MutableJsonElement<*>? = origin
+            val deltaPath: MutableList<MutableJsonElement<*>> = ArrayList<MutableJsonElement<*>>().apply {
+                parent?.let { add(it) }
+                add(origin)
+            }
             var deltaOriginIndex: PathIndex? = null
 
             if (index != null) {
+                val deltaOrigin = deltaPath.last()
                 if (index.keyPath != null) {
                     if (deltaOrigin is MutableJsonObject) {
-                        deltaParent = deltaOrigin
-                        deltaOrigin = deltaOrigin[index.keyPath]
+                        deltaPath.add(deltaOrigin[index.keyPath]!!)
                         deltaOriginIndex = index
                     } else {
-                        println("Can't navigate to keypath of $deltaOrigin")
+                        throw MissedPacketException.CantNavigateToKey(index.keyPath, deltaPath, delta)
                     }
                 } else if (index.indexPath != null) {
                     if (deltaOrigin is MutableJsonArray) {
-                        deltaParent = deltaOrigin
-                        deltaOrigin = deltaOrigin.getOrNull(index.indexPath)
+                        while (index.indexPath !in deltaOrigin.indices) deltaOrigin.add(MutableJsonEmpty)
+                        deltaPath.add(deltaOrigin[index.indexPath])
                         deltaOriginIndex = index
+                    } else {
+                        throw MissedPacketException.CantNavigateToIndex(index.indexPath, deltaPath, delta)
                     }
                 }
             }
 
             for (index in delta.path) {
                 val (k, i) = index
+                val deltaOrigin = deltaPath.last()
+
                 if (k != null) {
                     if (deltaOrigin is MutableJsonObject) {
-                        deltaParent = deltaOrigin
-                        deltaOrigin = deltaOrigin[k]
+                        deltaPath.add(deltaOrigin.computeIfAbsent(k) { MutableJsonEmpty })
                         deltaOriginIndex = index
                     } else {
-                        println("Can't navigate to keypath of $deltaOrigin")
+                        throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                     }
                 } else if (i != null) {
                     if (deltaOrigin is MutableJsonArray) {
-                        deltaParent = deltaOrigin
                         while (i !in deltaOrigin.indices) deltaOrigin.add(MutableJsonEmpty)
-                        deltaOrigin = deltaOrigin[i]
+                        deltaPath.add(deltaOrigin[i])
                         deltaOriginIndex = index
                     } else {
-                        println("Can't navigate to keypath of $deltaOrigin")
+                        throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                     }
                 }
             }
@@ -119,17 +135,18 @@ object DeepDiff {
                 Kind.NEWLY_ADDED -> {
 //                    println("NEW $delta")
 
+                    val deltaParent = deltaPath.getOrNull(deltaPath.size - 2)
                     if (deltaParent == null) {
-                        println("Can't add rhs to null parent for $deltaOrigin")
+                        println("Can't add rhs to ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }}")
                     } else if (deltaOriginIndex == null) {
-                        println("Can't add rhs to parent $deltaParent with null index")
+                        println("Can't add rhs to ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }} with null index")
                     } else {
                         val (keyPath, indexPath) = deltaOriginIndex
                         if (keyPath != null) {
                             if (deltaParent is MutableJsonObject) {
                                 deltaParent[keyPath] = delta.rhs!!.toMutable()
                             } else {
-                                println("Can't navigate to key path of $deltaParent")
+                                throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                             }
                         } else if (indexPath != null) {
                             if (deltaParent is MutableJsonArray) {
@@ -140,7 +157,7 @@ object DeepDiff {
                                 else
                                     deltaParent.add(indexPath, delta.rhs!!.toMutable())
                             } else {
-                                println("Can't navigate to index path of $deltaOrigin")
+                                throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                             }
                         }
                     }
@@ -148,23 +165,24 @@ object DeepDiff {
                 Kind.DELETED -> {
 //                    println("DELETED $delta")
 
+                    val deltaParent = deltaPath.getOrNull(deltaPath.size - 2)
                     if (deltaParent == null) {
-                        println("Can't delete from null parent for $deltaOrigin")
+                        println("Can't delete from null parent for ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }}")
                     } else if (deltaOriginIndex == null) {
-                        println("Can't delete from parent $deltaParent with null index")
+                        println("Can't delete from parent ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }} with null index")
                     } else {
                         val (keyPath, indexPath) = deltaOriginIndex
                         if (keyPath != null) {
                             if (deltaParent is MutableJsonObject) {
                                 deltaParent.remove(keyPath)
                             } else {
-                                println("Can't navigate to key path of $deltaParent")
+                                throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                             }
                         } else if (indexPath != null) {
                             if (deltaParent is MutableJsonArray) {
                                 if (indexPath in deltaParent.indices) deltaParent.removeAt(indexPath)
                             } else {
-                                println("Can't navigate to index path of $deltaOrigin")
+                                throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                             }
                         }
                     }
@@ -172,6 +190,8 @@ object DeepDiff {
                 Kind.EDITED -> {
 //                    println("EDITED $delta")
 
+                    val deltaParent = deltaPath.getOrNull(deltaPath.size - 2)
+                    val deltaOrigin = deltaPath.lastOrNull()
                     val rhs = delta.rhs?.toMutable() ?: MutableJsonNull
                     if (deltaOrigin is MutableJsonObject && rhs is MutableJsonObject) {
                         deltaOrigin.clear()
@@ -187,22 +207,22 @@ object DeepDiff {
                         deltaOrigin.boolean = rhs.boolean
                     } else {
                         if (deltaParent == null) {
-                            println("Can't edit from null parent for $deltaOrigin")
+                            println("Can't edit from null parent for ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }}")
                         } else if (deltaOriginIndex == null) {
-                            println("Can't edit from parent $deltaParent with null index")
+                            println("Can't edit from parent ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }} with null index")
                         } else {
                             val (keyPath, indexPath) = deltaOriginIndex
                             if (keyPath != null) {
                                 if (deltaParent is MutableJsonObject) {
                                     deltaParent[keyPath] = rhs
                                 } else {
-                                    println("Can't navigate to key path of $deltaParent")
+                                    throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                                 }
                             } else if (indexPath != null) {
                                 if (deltaParent is MutableJsonArray) {
                                     deltaParent[indexPath] = rhs
                                 } else {
-                                    println("Can't navigate to index path of $deltaOrigin")
+                                    throw MissedPacketException.CantNavigateToPath(delta.path, deltaPath, delta)
                                 }
                             }
                         }
@@ -211,7 +231,11 @@ object DeepDiff {
                 Kind.ARRAY -> {
 //                    println("ARRAY $delta")
 
-                    if (deltaOrigin !is MutableJsonArray) println("Can't do an array operation ($delta) on $deltaOrigin")
+                    val deltaParent = deltaPath.getOrNull(deltaPath.size - 2)
+                    val deltaOrigin = deltaPath.lastOrNull()
+                    if (deltaOrigin !is MutableJsonArray) {
+                        println("Can't do an array operation ${delta.path.joinToString("/") { it.keyPath ?: it.indexPath.toString() }} on ${deltaPath.joinToString("#>") { it::class.simpleName ?: "null" }}")
+                    }
                     else {
                         val item = delta.item
                         val index = delta.index

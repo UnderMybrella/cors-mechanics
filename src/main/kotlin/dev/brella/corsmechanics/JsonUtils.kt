@@ -90,6 +90,20 @@ public suspend inline fun HttpClient.getChroniclerVersionsBefore(type: String, a
         builder()
     }["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.getJsonObjectOrNull("data") }
 
+public suspend inline fun HttpClient.getChroniclerVersionsBetween(type: String, before: Instant, after: Instant, builder: HttpRequestBuilder.() -> Unit = {}) =
+    getChroniclerVersionsBetween(type, before.toString(), after.toString(), builder)
+
+public suspend inline fun HttpClient.getChroniclerVersionsBetween(type: String, before: String, after: String, builder: HttpRequestBuilder.() -> Unit = {}) =
+    (get<JsonObject>("https://api.sibr.dev/chronicler/v2/versions") {
+        parameter("type", type)
+        parameter("before", before)
+        parameter("after", after)
+        parameter("order", "asc")
+        parameter("count", 100)
+
+        builder()
+    }["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.getJsonObjectOrNull("data") }
+
 public suspend inline fun HttpClient.getChroniclerEntity(type: String, at: Instant, builder: HttpRequestBuilder.() -> Unit = {}) =
     getChroniclerEntity(type, at.toString(), builder)
 
