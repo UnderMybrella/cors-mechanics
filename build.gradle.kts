@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "dev.brella"
-version = "1.4.7-EXPERIMENTAL"
+version = "1.4.8-EXPERIMENTAL"
 
 val latestTag = "latest-experimental"
 
@@ -24,7 +24,7 @@ repositories {
 dependencies {
     testImplementation(kotlin("test-junit"))
 
-    val ktor_version = "1.6.4"
+    val ktor_version = "1.6.7"
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.3.1")
 

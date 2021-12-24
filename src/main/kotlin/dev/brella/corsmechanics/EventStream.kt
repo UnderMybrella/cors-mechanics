@@ -173,12 +173,15 @@ sealed class EventStream(
             method = HttpMethod.Get
             timeout {
                 socketTimeoutMillis = 180_000L
-                connectTimeoutMillis = 20_000L
+                connectTimeoutMillis = 30_000L
             }
             endpoint()
         }
         if (!call.response.status.isSuccess()) return emptyFlow()
-        if (call.response.contentLength() == 0L) return emptyFlow()
+        if (call.response.contentLength() == 0L) {
+            delay(20_000)
+            return emptyFlow()
+        }
 
         return channelFlow {
             val content = if (call.response.headers[HttpHeaders.ContentEncoding] == "gzip")
