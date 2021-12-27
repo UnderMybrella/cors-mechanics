@@ -24,16 +24,17 @@ import java.util.concurrent.TimeUnit
 import kotlin.time.ExperimentalTime
 
 sealed class BlaseballDataSource {
-    abstract val eventStream: EventStream
+    abstract val eventStream: EventStream?
     val eventStringStream by lazy {
-        eventStream.liveData
-            .mapNotNull(JsonObject::toString)
-            .shareIn(CorsMechanics, SharingStarted.Eagerly, 1)
+        eventStream?.liveData
+            ?.mapNotNull(JsonObject::toString)
+            ?.shareIn(CorsMechanics, SharingStarted.Eagerly, 1)
     }
 
     class Live(val json: Json, val http: HttpClient, val scope: CoroutineScope) : BlaseballDataSource() {
-        override val eventStream: EventStream by lazy {
-            EventStream.FromEventSource("Live", json, http, scope)
+        override val eventStream: EventStream? by lazy {
+            if (DISABLE_EVENT_STREAM) null
+            else EventStream.FromEventSource("Live", json, http, scope)
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
@@ -58,8 +59,9 @@ sealed class BlaseballDataSource {
     }
 
     class Blasement(val json: Json, val http: HttpClient, val scope: CoroutineScope, val instance: String) : BlaseballDataSource() {
-        override val eventStream: EventStream by lazy {
-            EventStream.FromEventSource("Blasement @ $instance", json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
+        override val eventStream: EventStream? by lazy {
+            if (DISABLE_EVENT_STREAM) null
+            else EventStream.FromEventSource("Blasement @ $instance", json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
@@ -84,8 +86,9 @@ sealed class BlaseballDataSource {
     }
 
     class Before(val json: Json, val http: HttpClient, val scope: CoroutineScope, val offset: Long) : BlaseballDataSource() {
-        override val eventStream: EventStream by lazy {
-            EventStream.FromChronicler("Before @ $offset", json, http, scope, time = { Clock.System.now().minus(offset, DateTimeUnit.SECOND).toString() })
+        override val eventStream: EventStream? by lazy {
+            if (DISABLE_EVENT_STREAM) null
+            else EventStream.FromChronicler("Before @ $offset", json, http, scope, time = { Clock.System.now().minus(offset, DateTimeUnit.SECOND).toString() })
         }
 
         override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =

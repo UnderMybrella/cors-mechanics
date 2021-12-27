@@ -73,7 +73,10 @@ object CorsMechanics : CoroutineScope {
  * - if this element is an object, each value is compressed against [baseElement], if provided.
  * - Otherwise, nothing happens
  */
-public fun JsonElement.compressElementWithKvon(baseElement: JsonElement? = null, arrayVersioning: Boolean = false): JsonElement {
+public fun JsonElement.compressElementWithKvon(
+    baseElement: JsonElement? = null,
+    arrayVersioning: Boolean = false
+): JsonElement {
     return when (this) {
         is JsonArray -> {
             if (arrayVersioning) {
@@ -88,7 +91,12 @@ public fun JsonElement.compressElementWithKvon(baseElement: JsonElement? = null,
 
                 buildJsonArray {
                     forEachIndexed { index, element ->
-                        add(element.compressElementWithKvon(if (index in previous.indices) previous[index] else null, arrayVersioning))
+                        add(
+                            element.compressElementWithKvon(
+                                if (index in previous.indices) previous[index] else null,
+                                arrayVersioning
+                            )
+                        )
                     }
                 }
             }
@@ -101,7 +109,12 @@ public fun JsonElement.compressElementWithKvon(baseElement: JsonElement? = null,
                 val changedKeys = filter { (key, value) -> previous[key] != value }
                 val missingKeys = previous.keys.filterNot(::containsKey)
 
-                changedKeys.forEach { (key, value) -> put(key, value.compressElementWithKvon(previous[key], arrayVersioning)) }
+                changedKeys.forEach { (key, value) ->
+                    put(
+                        key,
+                        value.compressElementWithKvon(previous[key], arrayVersioning)
+                    )
+                }
                 missingKeys.forEach { key -> put(key, KvonData.KVON_MISSING) }
             }
         }
@@ -118,7 +131,15 @@ public fun JsonElement.compressElementWithKvon(baseElement: JsonElement? = null,
 data class ProxiedResponse(val body: Any, val status: HttpStatusCode, val headers: StringValues) {
     companion object {
         suspend inline fun proxyFrom(response: HttpResponse, passCookies: Boolean = false) =
-            ProxiedResponse(response.receive<Input>().readBytes(), response.status, if (passCookies) response.headers else response.headers.filter { k, v -> !k.equals(HttpHeaders.SetCookie, true) })
+            ProxiedResponse(
+                response.receive<Input>().readBytes(),
+                response.status,
+                if (passCookies) response.headers else response.headers.filter { k, v ->
+                    !k.equals(
+                        HttpHeaders.SetCookie,
+                        true
+                    )
+                })
     }
 }
 
@@ -147,7 +168,10 @@ suspend inline fun ApplicationCall.respondProxied(proxiedResponse: ProxiedRespon
     }
 
     val etag = request.header(HttpHeaders.IfNoneMatch)
-    if (etag != null && etag == proxiedResponse.headers[HttpHeaders.ETag]) respond(HttpStatusCode.NotModified, EmptyContent)
+    if (etag != null && etag == proxiedResponse.headers[HttpHeaders.ETag]) respond(
+        HttpStatusCode.NotModified,
+        EmptyContent
+    )
     else respond(proxiedResponse.status, proxiedResponse.body)
 }
 
@@ -164,7 +188,10 @@ suspend inline fun ApplicationCall.respondProxied(proxiedResponse: ProxiedRespon
     }
 
     val etag = request.header(HttpHeaders.IfNoneMatch)
-    if (etag != null && etag == proxiedResponse.headers[HttpHeaders.ETag]) respond(HttpStatusCode.NotModified, EmptyContent)
+    if (etag != null && etag == proxiedResponse.headers[HttpHeaders.ETag]) respond(
+        HttpStatusCode.NotModified,
+        EmptyContent
+    )
     else respond(proxiedResponse.status, proxiedResponse.body)
 }
 
@@ -215,12 +242,29 @@ fun ApplicationCall.buildProxiedRoute(): String? {
 val requestCacheBuckets: RequestCacheBuckets = ConcurrentHashMap()
 val dataSources = BlaseballDataSource.Instances(json, http, CorsMechanics)
 
-inline fun forRequest(source: BlaseballDataSource?, host: String, path: String, queryParameters: String, cookies: List<Cookie>): CompletableFuture<ProxiedResponse>? {
+inline fun forRequest(
+    source: BlaseballDataSource?,
+    host: String,
+    path: String,
+    queryParameters: String,
+    cookies: List<Cookie>
+): CompletableFuture<ProxiedResponse>? {
     val (fallback, buckets) = requestCacheBuckets[host] ?: return null
-    return (buckets[path] ?: fallback).get(ProxyRequest(source, host, if (queryParameters.isNotBlank()) "$path?$queryParameters" else path, cookies))
+    return (buckets[path] ?: fallback).get(
+        ProxyRequest(
+            source,
+            host,
+            if (queryParameters.isNotBlank()) "$path?$queryParameters" else path,
+            cookies
+        )
+    )
 }
 
 data class ProxyRequest(val source: BlaseballDataSource?, val host: String, val path: String, val cookies: List<Cookie>)
+
+val DISABLE_EVENT_STREAM = System.getProperty("CORS_MECHANICS_DISABLE_EVENT_STREAM")?.toBooleanStrictOrNull()
+    ?: System.getenv("CORS_MECHANICS_DISABLE_EVENT_STREAM")?.toBooleanStrictOrNull()
+    ?: false
 
 @OptIn(ExperimentalTime::class, ExperimentalStdlibApi::class)
 fun Application.module(testing: Boolean = false) {
@@ -267,7 +311,8 @@ fun Application.module(testing: Boolean = false) {
 
             val defaultCacheSpec = proxyConfig.propertyOrNull("default_cache")?.getString() ?: globalDefaultCacheSpec
 
-            val defaultCacheBuilder = (defaultCacheSpec?.let { Caffeine.from(it) } ?: Caffeine.newBuilder().expireAfterWrite(1, TimeUnit.SECONDS))
+            val defaultCacheBuilder = (defaultCacheSpec?.let { Caffeine.from(it) } ?: Caffeine.newBuilder()
+                .expireAfterWrite(1, TimeUnit.SECONDS))
 
             val cache: AsyncLoadingCache<ProxyRequest, ProxiedResponse> =
                 defaultCacheBuilder
@@ -342,7 +387,7 @@ fun Application.module(testing: Boolean = false) {
                             .headers
                             .getAll(HttpHeaders.Cookie)
                             ?.map(::parseServerSetCookieHeader)
-                        ?: emptyList()
+                            ?: emptyList()
                     )?.await() ?: return@get
                 )
             }
@@ -357,140 +402,171 @@ fun Application.module(testing: Boolean = false) {
 
 fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances) {
     route("/events") {
-        get("/streamData") {
-            val dataSource = dataSources sourceFor call
-            call.respondTextWriter(ContentType.Text.EventStream) {
-                dataSource.eventStream.relaunchJobIfNeeded().join()
-
-                val job = dataSource.eventStringStream.onEach { data ->
-                    withContext(Dispatchers.IO) {
-                        append("data:")
-                        append(data)
-                        appendLine()
-                        appendLine()
-                        flush()
-                    }
-                }.launchIn(this@get)
-
-                for (i in 0 until 20) {
-                    delay(5000)
-                    if (!job.isActive) break
-                }
-
-                if (job.isActive) job.cancelAndJoin()
+        if (DISABLE_EVENT_STREAM) {
+            get("/streamData") {
+                call.respondText(
+                    ": Event Stream temporarily disabled. Contact UnderMybrella#1084 if you need stream data at the moment",
+                    contentType = ContentType.Text.EventStream
+                )
             }
-        }
+        } else {
+            get("/streamData") {
+                val dataSource = dataSources sourceFor call
+                call.respondTextWriter(ContentType.Text.EventStream) {
+                    dataSource.eventStream!!.relaunchJobIfNeeded().join()
 
-        get("/streamData/{path...}") {
-            val dataSource = dataSources sourceFor call
-            val path = call.parameters.getAll("path") ?: emptyList()
-
-            call.respondTextWriter(ContentType.Text.EventStream) {
-                dataSource.eventStream.relaunchJobIfNeeded().join()
-
-                val job = dataSource.eventStream.liveData.onEach { data ->
-                    withContext(Dispatchers.IO) {
-                        append("data:")
-                        append(data.filterByPath(path)?.toString())
-                        appendLine()
-                        appendLine()
-                        flush()
-                    }
-                }.launchIn(this@get)
-
-                for (i in 0 until 20) {
-                    delay(5000)
-                    if (!job.isActive) break
-                }
-
-                if (job.isActive) job.cancelAndJoin()
-            }
-        }
-
-        post<String>("/streamData/jq") { filter ->
-            val dataSource = dataSources sourceFor call
-            dataSource.eventStream.relaunchJobIfNeeded().join()
-
-            call.respondTextWriter(ContentType.Text.EventStream) {
-                val job = dataSource.eventStringStream.onEach { data ->
-                    withContext(Dispatchers.IO) {
-                        val request = Jq.executeRequest(data, filter)
-                        if (request.hasErrors()) {
-                            appendLine("event: error")
-                            request.errors.forEach { line ->
-                                append("data:")
-                                appendLine(line)
-                            }
-                            appendLine()
-                            flush()
-                            close()
-                        } else {
+                    val job = dataSource.eventStringStream!!.onEach { data ->
+                        withContext(Dispatchers.IO) {
                             append("data:")
-                            appendLine(request.output)
+                            append(data)
+                            appendLine()
                             appendLine()
                             flush()
                         }
+                    }.launchIn(this@get)
+
+                    for (i in 0 until 20) {
+                        delay(5000)
+                        if (!job.isActive) break
                     }
-                }.launchIn(this@post)
 
-                for (i in 0 until 20) {
-                    delay(5000)
-                    if (!job.isActive) break
+                    if (job.isActive) job.cancelAndJoin()
                 }
-
-                if (job.isActive) job.cancelAndJoin()
             }
         }
 
-        webSocket("/streamSocket") {
-            val dataSource = dataSources sourceFor call
-            dataSource.eventStream.relaunchJobIfNeeded().join()
+        if (DISABLE_EVENT_STREAM) {
+            get("/streamData/{path...}") {
+                call.respondText(
+                    ": Event Stream temporarily disabled. Contact UnderMybrella#1084 if you need stream data at the moment",
+                    contentType = ContentType.Text.EventStream
+                )
+            }
+        } else {
+            get("/streamData/{path...}") {
+                val dataSource = dataSources sourceFor call
+                val path = call.parameters.getAll("path") ?: emptyList()
 
-            val format = call.request.queryParameters["format"]
-            val wait = call.request.queryParameters["wait"]?.toBooleanStrictOrNull() ?: false
+                call.respondTextWriter(ContentType.Text.EventStream) {
+                    dataSource.eventStream!!.relaunchJobIfNeeded().join()
 
-            if (format?.equals("kvon", true) == true) {
-                var previous: JsonObject? = null
+                    val job = dataSource.eventStream!!.liveData.onEach { data ->
+                        withContext(Dispatchers.IO) {
+                            append("data:")
+                            append(data.filterByPath(path)?.toString())
+                            appendLine()
+                            appendLine()
+                            flush()
+                        }
+                    }.launchIn(this@get)
 
-                dataSource.eventStream.liveData.onEach { data ->
-                    val kvon = data.compressElementWithKvon(previous, false)
-                    send(json.encodeToString(kvon))
+                    for (i in 0 until 20) {
+                        delay(5000)
+                        if (!job.isActive) break
+                    }
 
-                    previous = data
-                }.launchIn(this).join()
-            } else {
+                    if (job.isActive) job.cancelAndJoin()
+                }
+            }
+        }
+
+        if (DISABLE_EVENT_STREAM) {
+            post("/streamData/jq") {
+                call.respondText(
+                    ": Event Stream temporarily disabled. Contact UnderMybrella#1084 if you need stream data at the moment",
+                    contentType = ContentType.Text.EventStream
+                )
+            }
+        } else {
+            post<String>("/streamData/jq") { filter ->
+                val dataSource = dataSources sourceFor call
+                dataSource.eventStream!!.relaunchJobIfNeeded().join()
+
+                call.respondTextWriter(ContentType.Text.EventStream) {
+                    val job = dataSource.eventStringStream!!.onEach { data ->
+                        withContext(Dispatchers.IO) {
+                            val request = Jq.executeRequest(data, filter)
+                            if (request.hasErrors()) {
+                                appendLine("event: error")
+                                request.errors.forEach { line ->
+                                    append("data:")
+                                    appendLine(line)
+                                }
+                                appendLine()
+                                flush()
+                                close()
+                            } else {
+                                append("data:")
+                                appendLine(request.output)
+                                appendLine()
+                                flush()
+                            }
+                        }
+                    }.launchIn(this@post)
+
+                    for (i in 0 until 20) {
+                        delay(5000)
+                        if (!job.isActive) break
+                    }
+
+                    if (job.isActive) job.cancelAndJoin()
+                }
+            }
+        }
+
+        if (DISABLE_EVENT_STREAM) {
+            webSocket("/streamSocket") {}
+        } else {
+            webSocket("/streamSocket") {
+                val dataSource = dataSources sourceFor call
+                dataSource.eventStream!!.relaunchJobIfNeeded().join()
+
+                val format = call.request.queryParameters["format"]
+                val wait = call.request.queryParameters["wait"]?.toBooleanStrictOrNull() ?: false
+
+                if (format?.equals("kvon", true) == true) {
+                    var previous: JsonObject? = null
+
+                    dataSource.eventStream!!.liveData.onEach { data ->
+                        val kvon = data.compressElementWithKvon(previous, false)
+                        send(json.encodeToString(kvon))
+
+                        previous = data
+                    }.launchIn(this).join()
+                } else {
 //                        streamData.liveData
 //                            .onEach { data -> send(json.encodeToString(data)) }
 //                            .launchIn(this)
 //                            .join()
 
-                var filter: String? = null
+                    var filter: String? = null
 
-                incoming.receiveAsFlow()
-                    .filterIsInstance<Frame.Text>()
-                    .onEach { frame -> filter = frame.readText() }
-                    .launchIn(this)
+                    incoming.receiveAsFlow()
+                        .filterIsInstance<Frame.Text>()
+                        .onEach { frame -> filter = frame.readText() }
+                        .launchIn(this)
 
-                if (wait) while (filter == null) delay(1_000)
+                    if (wait) while (filter == null) delay(1_000)
 
-                dataSource.eventStringStream
-                    .onEach { data ->
-                        if (filter == null) {
-                            send(data)
-                        } else {
-                            val response = Jq.executeRequest(data, filter!!)
-                            if (response.hasErrors()) {
-                                close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, buildString {
-                                    append("Jq request with filter ($filter) had errors: ")
-                                    response.errors.joinTo(this)
-                                }))
+                    dataSource.eventStringStream!!
+                        .onEach { data ->
+                            if (filter == null) {
+                                send(data)
                             } else {
-                                send(response.output)
+                                val response = Jq.executeRequest(data, filter!!)
+                                if (response.hasErrors()) {
+                                    close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, buildString {
+                                        append("Jq request with filter ($filter) had errors: ")
+                                        response.errors.joinTo(this)
+                                    }))
+                                } else {
+                                    send(response.output)
+                                }
                             }
                         }
-                    }
-                    .launchIn(this)
-                    .join()
+                        .launchIn(this)
+                        .join()
+                }
             }
         }
     }
