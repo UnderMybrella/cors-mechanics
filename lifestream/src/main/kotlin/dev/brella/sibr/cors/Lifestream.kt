@@ -23,7 +23,6 @@ import io.ktor.util.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
 import java.time.Duration
@@ -31,8 +30,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
-import kotlin.math.sqrt
-import kotlin.random.Random
 
 object CorsMechanics : CoroutineScope {
     val executor = Executors.newCachedThreadPool(NamedThreadFactory("CorsMechanics"))

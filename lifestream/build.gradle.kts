@@ -40,15 +40,6 @@ dependencies {
     }
     implementation("io.ktor:ktor-client-encoding:$ktor_version")
 
-    implementation("dev.brella:kotlinx-serialisation-kvon:1.1.0") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
-    }
-    implementation("dev.brella:ktor-client-kvon:1.0.0") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
-    }
-    implementation("dev.brella:kornea-errors:2.2.0-alpha")
     implementation("dev.brella:ktornea-utils:1.3.3-alpha")
 
     implementation("com.github.ben-manes.caffeine:caffeine:3.0.1")
