@@ -1003,11 +1003,19 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
             RISING_STARS[request.queryParameters["at"] ?: "NOW"].await()
         }
 
-        jsonExplorer("/stream") {
-            val dataSource = dataSources sourceFor this
-            dataSource.eventStream.relaunchJobIfNeeded().join()
+        if (DISABLE_EVENT_STREAM) {
+            val stream = buildJsonObject {
+                this.put("_comment", "Event Stream temporarily disabled. Contact UnderMybrella#1084 if you need stream data at the moment")
+            }
 
-            dataSource.eventStream.liveData.first().getJsonObject("value")
+            jsonExplorer("/stream") { stream }
+        } else {
+            jsonExplorer("/stream") {
+                val dataSource = dataSources sourceFor this
+                dataSource.eventStream!!.relaunchJobIfNeeded().join()
+
+                dataSource.eventStream!!.liveData.first().getJsonObject("value")
+            }
         }
     }
 }
