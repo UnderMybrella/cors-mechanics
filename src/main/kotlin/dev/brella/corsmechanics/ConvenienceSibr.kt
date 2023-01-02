@@ -2,32 +2,29 @@ package dev.brella.corsmechanics
 
 import com.github.benmanes.caffeine.cache.Caffeine
 import dev.brella.kornea.blaseball.base.common.*
-import dev.brella.kornea.blaseball.base.common.beans.*
-import io.ktor.application.*
+import dev.brella.kornea.blaseball.base.common.beans.BlaseballStandings
+import dev.brella.kornea.blaseball.base.common.beans.BlaseballTiebreaker
+import dev.brella.kornea.blaseball.base.common.beans.Colour
+import dev.brella.kornea.blaseball.base.common.beans.ColourAsHexSerialiser
 import io.ktor.client.*
+import io.ktor.client.call.*
 import io.ktor.client.request.*
-import io.ktor.http.*
-import io.ktor.response.*
-import io.ktor.routing.*
-import io.ktor.util.*
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
+import io.ktor.server.application.*
+import io.ktor.server.routing.*
+import io.ktor.server.util.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.actor
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.future.asDeferred
-import kotlinx.coroutines.future.await
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.launch
-import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.toInstant
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import java.util.concurrent.TimeUnit
+import kotlinx.datetime.Clock as ClockKt
+import kotlinx.serialization.Serializable as Serializable
+import java.time.Clock as ClockJt
 
 @Serializable
 data class ConvenienceLeague(
@@ -35,21 +32,21 @@ data class ConvenienceLeague(
     val subleagues: List<ConvenienceSubLeague>,
     val name: String,
     val tiebreakers: List<BlaseballTiebreaker>,
-    val tiebreakersID: TiebreakerID
+    val tiebreakersID: TiebreakerID,
 )
 
 @Serializable
 data class ConvenienceSubLeague(
     val id: SubleagueID,
     val divisions: List<ConvenienceDivision>,
-    val name: String
+    val name: String,
 )
 
 @Serializable
 data class ConvenienceDivision(
     val id: DivisionID,
     val teams: List<ChroniclerBlaseballTeam>,
-    val name: String
+    val name: String,
 )
 
 @Serializable
@@ -89,14 +86,20 @@ data class ChroniclerBlaseballTeam(
     val state: JsonElement? = null,
     val evolution: Double? = null,
     val winStreak: Double? = null,
-    val level: Int? = null
+    val level: Int? = null,
 )
 
 @Serializable
 data class ChroniclerV2Data<T>(val nextPage: String? = null, val items: List<ChroniclerV2Item<T>> = emptyList())
 
 @Serializable
-data class ChroniclerV2Item<T>(val entityId: String, val hash: String, val validFrom: Instant, val validTo: Instant?, val data: T)
+data class ChroniclerV2Item<T>(
+    val entityId: String,
+    val hash: String,
+    val validFrom: Instant,
+    val validTo: Instant?,
+    val data: T,
+)
 
 @Serializable
 data class ConvenienceGameStatsheet(
@@ -108,7 +111,7 @@ data class ConvenienceGameStatsheet(
     val awayTeamStats: ConvenienceTeamStatsheet?,
     val homeTeamStats: ConvenienceTeamStatsheet?,
     val awayTeamStatsheetID: TeamStatsheetID,
-    val homeTeamStatsheetID: TeamStatsheetID
+    val homeTeamStatsheetID: TeamStatsheetID,
 )
 
 @Serializable
@@ -120,7 +123,7 @@ data class ConvenienceTeamStatsheet(
     val wins: Int,
     val losses: Int,
     val name: String,
-    val teamId: TeamID
+    val teamId: TeamID,
 )
 
 @Serializable
@@ -152,14 +155,14 @@ data class ConveniencePlayerStatsheet(
     val hitByPitch: Int? = null,
     val hitBatters: Int? = null,
     val quadruples: Int? = null,
-    val pitchesThrown: Int? = null
+    val pitchesThrown: Int? = null,
 )
 
 @Serializable
 data class ConvenienceSeasonStatsheet(
     val id: SeasonStatsheetID,
     val teamStats: List<ConvenienceTeamStatsheet> = emptyList(),
-    val teamStatIDs: List<TeamStatsheetID>
+    val teamStatIDs: List<TeamStatsheetID>,
 )
 
 @Serializable
@@ -170,7 +173,7 @@ data class BlaseballGameStatsheet(
     val awayTeamTotalBatters: Int,
     val homeTeamTotalBatters: Int,
     val awayTeamStats: TeamStatsheetID,
-    val homeTeamStats: TeamStatsheetID
+    val homeTeamStats: TeamStatsheetID,
 )
 
 @Serializable
@@ -182,7 +185,7 @@ data class BlaseballSeasonData(
     val seasonNumber: Int,
     val standings: StandingsID,
     val stats: SeasonStatsheetID,
-    val terminology: TerminologyID
+    val terminology: TerminologyID,
 )
 
 @Serializable
@@ -197,7 +200,7 @@ data class ConvenienceSeasonData(
     val standingsID: StandingsID,
     val stats: ConvenienceSeasonStatsheet?,
     val statsID: SeasonStatsheetID,
-    val terminology: TerminologyID
+    val terminology: TerminologyID,
 )
 
 @Serializable
@@ -229,53 +232,80 @@ data class BlaseballPlayerStatsheet(
     val hitByPitch: Int? = null,
     val hitBatters: Int? = null,
     val quadruples: Int? = null,
-    val pitchesThrown: Int? = null
+    val pitchesThrown: Int? = null,
 )
 
-suspend inline fun <reified T> HttpClient.chroniclerVersionMostRecent(chroniclerHost: String, type: String, builder: HttpRequestBuilder.() -> Unit = {}): T =
-    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+suspend inline fun <reified T> HttpClient.chroniclerVersionMostRecent(
+    chroniclerHost: String,
+    type: String,
+    builder: HttpRequestBuilder.() -> Unit = {},
+): T =
+    get("$chroniclerHost/v2/entities") {
         parameter("type", type)
 
         builder()
-    }.items.first().data
+    }.body<ChroniclerV2Data<T>>().items.first().data
 
-suspend inline fun <reified T> HttpClient.chroniclerVersionList(chroniclerHost: String, type: String, builder: HttpRequestBuilder.() -> Unit = {}): List<T> =
-    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+suspend inline fun <reified T> HttpClient.chroniclerVersionList(
+    chroniclerHost: String,
+    type: String,
+    builder: HttpRequestBuilder.() -> Unit = {},
+): List<T> =
+    get("$chroniclerHost/v2/entities") {
         parameter("type", type)
 
         builder()
-    }.items.map(ChroniclerV2Item<T>::data)
+    }.body<ChroniclerV2Data<T>>().items.map(ChroniclerV2Item<T>::data)
 
-suspend inline fun <reified T> HttpClient.chroniclerVersionListItems(chroniclerHost: String, type: String, builder: HttpRequestBuilder.() -> Unit = {}): List<ChroniclerV2Item<T>> =
-    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+suspend inline fun <reified T> HttpClient.chroniclerVersionListItems(
+    chroniclerHost: String,
+    type: String,
+    builder: HttpRequestBuilder.() -> Unit = {},
+): List<ChroniclerV2Item<T>> =
+    get("$chroniclerHost/v2/entities") {
         parameter("type", type)
 
         builder()
-    }.items
+    }.body<ChroniclerV2Data<T>>().items
 
-suspend inline fun <reified T> HttpClient.chroniclerEntityList(chroniclerHost: String, type: String, at: String, builder: HttpRequestBuilder.() -> Unit = {}): List<T> =
-    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+suspend inline fun <reified T> HttpClient.chroniclerEntityList(
+    chroniclerHost: String,
+    type: String,
+    at: String,
+    builder: HttpRequestBuilder.() -> Unit = {},
+): List<T> =
+    get("$chroniclerHost/v2/entities") {
         parameter("type", type)
         parameter("at", at)
 
         builder()
-    }.items.map(ChroniclerV2Item<T>::data)
+    }.body<ChroniclerV2Data<T>>().items.map(ChroniclerV2Item<T>::data)
 
-suspend inline fun <reified T> HttpClient.chroniclerEntityMostRecent(chroniclerHost: String, type: String, at: String, builder: HttpRequestBuilder.() -> Unit = {}): T =
-    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+suspend inline fun <reified T> HttpClient.chroniclerEntityMostRecent(
+    chroniclerHost: String,
+    type: String,
+    at: String,
+    builder: HttpRequestBuilder.() -> Unit = {},
+): T =
+    get("$chroniclerHost/v2/entities") {
         parameter("type", type)
         parameter("at", at)
 
         builder()
-    }.items.maxByOrNull(ChroniclerV2Item<T>::validFrom)!!.data
+    }.body<ChroniclerV2Data<T>>().items.maxByOrNull(ChroniclerV2Item<T>::validFrom)!!.data
 
-suspend inline fun <reified T> HttpClient.chroniclerEntityMostRecentOrNull(chroniclerHost: String, type: String, at: String, builder: HttpRequestBuilder.() -> Unit = {}): T? =
-    get<ChroniclerV2Data<T>>("$chroniclerHost/v2/entities") {
+suspend inline fun <reified T> HttpClient.chroniclerEntityMostRecentOrNull(
+    chroniclerHost: String,
+    type: String,
+    at: String,
+    builder: HttpRequestBuilder.() -> Unit = {},
+): T? =
+    get("$chroniclerHost/v2/entities") {
         parameter("type", type)
         parameter("at", at)
 
         builder()
-    }.items.maxByOrNull(ChroniclerV2Item<T>::validFrom)?.data
+    }.body<ChroniclerV2Data<T>>().items.maxByOrNull(ChroniclerV2Item<T>::validFrom)?.data
 
 
 val SEASON_STREAM_QUERY_TIMES = arrayOf(
@@ -300,17 +330,28 @@ val SEASON_STREAM_QUERY_TIMES = arrayOf(
     "2021-05-23T00:00:00Z"
 )
 
-data class PlayerRequest(val players: List<String>, val time: String?, val backing: CompletableDeferred<Map<String, JsonObject>> = CompletableDeferred()) : CompletableDeferred<Map<String, JsonObject>> by backing
+data class PlayerRequest(
+    val players: List<String>,
+    val time: String?,
+    val backing: CompletableDeferred<Map<String, JsonObject>> = CompletableDeferred(),
+) : CompletableDeferred<Map<String, JsonObject>> by backing
 
 @Serializable
 data class TimeMapWrapper(val data: List<TimeMap>)
 
 @Serializable
-data class TimeMap(val season: Int, val tournament: Int, val day: Int, val type: String?, val startTime: Instant, val endTime: Instant?) {
+data class TimeMap(
+    val season: Int,
+    val tournament: Int,
+    val day: Int,
+    val type: String?,
+    val startTime: Instant,
+    val endTime: Instant?,
+) {
     operator fun contains(moment: Instant): Boolean = moment >= startTime && (endTime == null || moment < endTime)
 }
 
-@OptIn(ExperimentalStdlibApi::class)
+@OptIn(ExperimentalStdlibApi::class, ObsoleteCoroutinesApi::class)
 fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: BlaseballDataSource.Instances) {
     val chroniclerHost = "https://api.sibr.dev/chronicler"
 
@@ -328,9 +369,9 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
             request.players.filterNot(map::containsKey).let { missing ->
                 if (missing.isNotEmpty()) {
                     if (request.time == null) {
-                        httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/players") {
+                        httpClient.get("https://api.blaseball.com/database/players") {
                             parameter("ids", missing.joinToString(","))
-                        }.associateByTo(map) { it.getString("id") }
+                        }.body<List<JsonObject>>().associateByTo(map) { it.getString("id") }
                     } else {
                         httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "player", request.time) {
                             parameter("id", missing.joinToString(","))
@@ -340,9 +381,9 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
             }
             request.players.filterNot(map::containsKey).let { missing ->
                 if (missing.isNotEmpty()) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/players") {
+                    httpClient.get("https://api.blaseball.com/database/players") {
                         parameter("ids", missing.joinToString(","))
-                    }.associateByTo(map) { it.getString("id") }
+                    }.body<List<JsonObject>>().associateByTo(map) { it.getString("id") }
                 }
             }
 
@@ -359,44 +400,50 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val TIME_MAPS = Caffeine.newBuilder()
         .expireAfterAccess(10, TimeUnit.MINUTES)
-        .buildCoroutines<Unit, List<TimeMap>> { httpClient.get<TimeMapWrapper>("https://api.sibr.dev/chronicler/v1/time/map").data }
+        .buildLoadingKotlin<Unit, List<TimeMap>>(CorsMechanics) {
+            httpClient.get("https://api.sibr.dev/chronicler/v1/time/map").body<TimeMapWrapper>().data
+        }
 
     val TIME_MAPS_BY_SEASON = Caffeine.newBuilder()
         .expireAfterAccess(10, TimeUnit.MINUTES)
-        .buildCoroutines<Int, List<TimeMap>> { key -> TIME_MAPS[Unit].await().filter { map -> map.season == key } }
+        .buildLoadingKotlin<Int, List<TimeMap>>(CorsMechanics) { key ->
+            TIME_MAPS.await(Unit).filter { map -> map.season == key }
+        }
 
     val TIME_MAPS_BY_SEASON_AND_DAY = Caffeine.newBuilder()
         .expireAfterAccess(10, TimeUnit.MINUTES)
-        .buildCoroutines<Int, List<TimeMap>> { key ->
+        .buildLoadingKotlin<Int, List<TimeMap>>(CorsMechanics) { key ->
             val season = ((key shr 16) and 0xFF).toByte().toInt() //Hack for negatives
             val day = key and 0xFFFF
-            TIME_MAPS_BY_SEASON[season].await().filter { map -> map.day == day }
+            TIME_MAPS_BY_SEASON.await(season).filter { map -> map.day == day }
         }
 
     val TIME_MAPS_BY_SEASON_DAY_AND_TOURNAMENT = Caffeine.newBuilder()
         .expireAfterAccess(10, TimeUnit.MINUTES)
-        .buildCoroutines<Int, List<TimeMap>> { key ->
+        .buildLoadingKotlin<Int, List<TimeMap>>(CorsMechanics) { key ->
             val tournament = ((key shr 24) and 0xFF).toByte().toInt() //Hack for negatives
-            TIME_MAPS_BY_SEASON_AND_DAY[key].await().filter { map -> map.tournament == tournament }
+            TIME_MAPS_BY_SEASON_AND_DAY.await(key).filter { map -> map.tournament == tournament }
         }
 
     val TIME_MAPS_BY_TIME = Caffeine.newBuilder()
         .expireAfterAccess(1, TimeUnit.MINUTES)
         .maximumSize(500)
-        .buildCoroutines<String?, List<TimeMap>> { key ->
+        .buildLoadingKotlin<String?, List<TimeMap>>(CorsMechanics) { key ->
             val time =
-                if (key == null || key == "NOW") Clock.System.now()
-                else runCatching { Instant.parse(key) }.getOrElse { Clock.System.now() }
+                if (key == null || key == "NOW") ClockKt.System.now()
+                else runCatching { Instant.parse(key) }.getOrElse { ClockKt.System.now() }
 
-            TIME_MAPS[Unit].await().filter { time in it }
+            TIME_MAPS.await(Unit).filter { time in it }
         }
 
     val TEAMS = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<Pair<String?, String>, JsonObject> { (time, id) ->
-            val team = httpClient.chroniclerEntityMostRecent<JsonObject>(chroniclerHost, "team", at = if (time == null || time == "NOW") Clock.System.now().toString() else time) {
-                parameter("id", id)
-            }
+        .buildLoadingKotlin<Pair<String?, String>, JsonObject>(CorsMechanics) { (time: String?, id: String?) ->
+            val team = httpClient.chroniclerEntityMostRecent<JsonObject>(
+                chroniclerHost,
+                "team",
+                at = if (time == null || time == "NOW") ClockKt.System.now().toString() else time
+            ) { parameter("id", id) }
 
             val playerIDs = buildList<String> {
                 team.getJsonArrayOrNull("lineup")?.forEach { it.jsonPrimitiveOrNull?.contentOrNull?.let(this::add) }
@@ -409,7 +456,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
             val players = PlayerRequest(playerIDs, time).request()
 
-            return@buildCoroutines buildJsonObject {
+            return@buildLoadingKotlin buildJsonObject {
                 team.forEach { (k, v) ->
                     when (k) {
                         "lineup", "shadows", "rotation", "bullpen", "bench" -> {
@@ -420,6 +467,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
                             }
                             put("${k}_ids", v)
                         }
+
                         else -> put(k, v)
                     }
                 }
@@ -428,8 +476,8 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val DIVISION_TEAMS = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, List<JsonObject>> { time ->
-            val time = if (time == "NOW") Clock.System.now().toString() else time
+        .buildLoadingKotlin<String, List<JsonObject>>(CorsMechanics) { time ->
+            val time = if (time == "NOW") ClockKt.System.now().toString() else time
 
             val divisions = httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "division", at = time)
 //            val teams = httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "team", at = time)
@@ -437,12 +485,10 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
             val teams: MutableMap<String, JsonObject> = HashMap()
 
-            coroutineScope {
-                divisions.flatMap { it.getJsonArray("teams") }
-                    .mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
-                    .map { id -> launch { teams[id] = TEAMS[Pair(time, id)].await() } }
-                    .joinAll()
-            }
+            divisions.flatMap { it.getJsonArray("teams") }
+                .mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+                .map { id -> launch { teams[id] = TEAMS[Pair(time, id)].await() } }
+                .joinAll()
 
             divisions.map { division ->
                 buildJsonObject {
@@ -459,11 +505,12 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val SUBLEAGUE_TEAMS = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, List<JsonObject>> { _time ->
-            val time = if (_time == "NOW") Clock.System.now().toString() else _time
+        .buildLoadingKotlin<String, List<JsonObject>>(CorsMechanics) { _time ->
+            val time = if (_time == "NOW") ClockKt.System.now().toString() else _time
 
-            val subleaguesDeferred = async { httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "subleague", at = time) }
-            val divisionsDeferred = DIVISION_TEAMS[_time].asDeferred()
+            val subleaguesDeferred =
+                async { httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "subleague", at = time) }
+            val divisionsDeferred = DIVISION_TEAMS[_time]
 
 //            val divisions = httpClient.chroniclerEntityList<BlaseballDivision>(chroniclerHost, "division", at = time)
 //                .associateBy(BlaseballDivision::id)
@@ -488,11 +535,12 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val LEAGUE_TEAMS = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, List<JsonObject>> { _time ->
-            val time = if (_time == "NOW") Clock.System.now().toString() else _time
+        .buildLoadingKotlin<String, List<JsonObject>>(CorsMechanics) { _time ->
+            val time = if (_time == "NOW") ClockKt.System.now().toString() else _time
 
-            val leaguesDeferred = async { httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "league", at = time) }
-            val subleaguesDeferred = SUBLEAGUE_TEAMS[_time].asDeferred()
+            val leaguesDeferred =
+                async { httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "league", at = time) }
+            val subleaguesDeferred = SUBLEAGUE_TEAMS[_time]
 //            val divisionsDeferred = async {
 //                httpClient.chroniclerEntityList<BlaseballDivision>(chroniclerHost, "division", at = time)
 //                    .associateBy(BlaseballDivision::id)
@@ -503,10 +551,14 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 //            }
 
             val tiebreakersDeferred = async {
-                when (val element = httpClient.chroniclerEntityMostRecentOrNull<JsonElement>(chroniclerHost, "tiebreakers", at = time)) {
-                    is JsonArray -> json.decodeFromJsonElement<List<JsonObject>>(element)
+                when (val element = httpClient.chroniclerEntityMostRecentOrNull<JsonElement>(
+                    chroniclerHost,
+                    "tiebreakers",
+                    at = time
+                )) {
+                    is JsonArray -> Serialisation.json.decodeFromJsonElement<List<JsonObject>>(element)
                     null -> listOf()
-                    else -> listOf(json.decodeFromJsonElement<JsonObject>(element))
+                    else -> listOf(Serialisation.json.decodeFromJsonElement<JsonObject>(element))
                 }
             }
 
@@ -523,15 +575,18 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
                             "subleagues" -> {
                                 putJsonArray("subleagues") {
                                     league.getJsonArrayOrNull("subleagues")?.forEach { subleague ->
-                                        subleague.jsonPrimitiveOrNull?.contentOrNull?.let(subleagues::get)?.let(this::add)
+                                        subleague.jsonPrimitiveOrNull?.contentOrNull?.let(subleagues::get)
+                                            ?.let(this::add)
                                     }
                                 }
                                 put("subleague_ids", v)
                             }
+
                             "tiebreakers" -> {
                                 put("tiebreakers", tiebreakers.firstOrNull { it["id"] == v } ?: JsonNull)
                                 put("tiebreakers_id", v)
                             }
+
                             else -> put(k, v)
                         }
                     }
@@ -541,30 +596,38 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val STREAM_BY_TIME = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, JsonObject> { time ->
-            httpClient.chroniclerEntityMostRecent<JsonObject>(chroniclerHost, "stream", at = if (time == "NOW") Clock.System.now().toString() else time)
+        .buildLoadingKotlin<String, JsonObject>(CorsMechanics) { time ->
+            httpClient.chroniclerEntityMostRecent<JsonObject>(
+                chroniclerHost,
+                "stream",
+                at = if (time == "NOW") ClockKt.System.now().toString() else time
+            )
         }
 
     val SIM_BY_TIME = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, JsonObject> { time ->
-            httpClient.chroniclerEntityMostRecent<JsonObject>(chroniclerHost, "sim", at = if (time == "NOW") Clock.System.now().toString() else time)
+        .buildLoadingKotlin<String, JsonObject>(CorsMechanics) { time ->
+            httpClient.chroniclerEntityMostRecent<JsonObject>(
+                chroniclerHost,
+                "sim",
+                at = if (time == "NOW") ClockKt.System.now().toString() else time
+            )
         }
 
     val GAME_STATSHEETS_BY_STAT_ID = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildCoroutines<Pair<String?, String>, List<JsonObject>> { (time, id) ->
+        .buildLoadingKotlin<Pair<String?, String>, List<JsonObject>>(CorsMechanics) { (time: String?, id: String?) ->
             val gameStatsheets = if (time == null) {
-                httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/gameStatsheets") {
+                httpClient.get("https://api.blaseball.com/database/gameStatsheets") {
                     parameter("ids", id)
-                }
+                }.body<List<JsonObject>>()
             } else {
                 httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "gamestatsheet", time) {
                     parameter("id", id)
                 }.ifEmpty {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/gameStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/gameStatsheets") {
                         parameter("ids", id)
-                    }
+                    }.body<List<JsonObject>>()
                 }
             }
 
@@ -577,9 +640,9 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
             val teamStatsheets = if (teamStatsheetIDs.isNotEmpty()) {
                 if (time == null) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/teamStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/teamStatsheets") {
                         parameter("ids", teamStatsheetIDs.joinToString(","))
-                    }.associateByTo(HashMap()) { it.getString("id") }
+                    }.body<List<JsonObject>>().associateByTo(HashMap()) { it.getString("id") }
                 } else {
                     httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "teamstatsheet", time) {
                         parameter("id", teamStatsheetIDs.joinToString(","))
@@ -590,9 +653,9 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
             teamStatsheetIDs.filterNot(teamStatsheets::containsKey).let { missing ->
                 if (missing.isNotEmpty()) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/teamStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/teamStatsheets") {
                         parameter("ids", missing.joinToString(","))
-                    }.forEach { statsheet ->
+                    }.body<List<JsonObject>>().forEach { statsheet ->
                         teamStatsheets[statsheet.getString("id")] = statsheet
                     }
                 }
@@ -604,9 +667,9 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
             val playerStatsheets = if (playerStatsheetIDs.isNotEmpty()) {
                 if (time == null) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/playerStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/playerStatsheets") {
                         parameter("ids", playerStatsheetIDs.joinToString(","))
-                    }.associateByTo(HashMap()) { it.getString("id") }
+                    }.body<List<JsonObject>>().associateByTo(HashMap()) { it.getString("id") }
                 } else {
                     httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "playerstatsheet", time) {
                         parameter("id", playerStatsheetIDs.joinToString(","))
@@ -617,15 +680,15 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
             playerStatsheetIDs.filterNot(playerStatsheets::containsKey).let { missing ->
                 if (missing.isNotEmpty()) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/playerStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/playerStatsheets") {
                         parameter("ids", missing.joinToString(","))
-                    }.forEach { statsheet ->
+                    }.body<List<JsonObject>>().forEach { statsheet ->
                         playerStatsheets[statsheet.getString("id")] = statsheet
                     }
                 }
             }
 
-            return@buildCoroutines gameStatsheets.map { gameStatsheet ->
+            return@buildLoadingKotlin gameStatsheets.map { gameStatsheet ->
                 buildJsonObject {
                     gameStatsheet.forEach { (k, v) ->
                         if (!k.endsWith("TeamStats"))
@@ -634,14 +697,19 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
                             put("${k}ID", v)
 
                             putJsonArray(k) {
-                                teamStatsheets[v.jsonPrimitiveOrNull?.contentOrNull ?: return@putJsonArray]?.let { teamStatsheet ->
+                                teamStatsheets[v.jsonPrimitiveOrNull?.contentOrNull
+                                    ?: return@putJsonArray]?.let { teamStatsheet ->
                                     addJsonObject {
                                         teamStatsheet.forEach { (k, v) ->
                                             if (k != "playerStats") put(k, v)
                                             else {
                                                 put("playerStatIDs", v)
                                                 putJsonArray("playerStats") {
-                                                    v.jsonArrayOrNull?.forEach { it.jsonPrimitiveOrNull?.content?.let(playerStatsheets::get)?.let(this::add) }
+                                                    v.jsonArrayOrNull?.forEach {
+                                                        it.jsonPrimitiveOrNull?.content?.let(
+                                                            playerStatsheets::get
+                                                        )?.let(this::add)
+                                                    }
                                                 }
                                             }
                                         }
@@ -656,35 +724,36 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val GAME_STATSHEETS_BY_GAME_ID = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildCoroutines<Pair<String?, String>, List<JsonObject>> { (time, id) ->
-            val game = httpClient.get<JsonObject>("https://api.blaseball.com/database/gameById/$id")
-            GAME_STATSHEETS_BY_STAT_ID[Pair(time, game.getString("statsheet"))].await()
+        .buildLoadingKotlin<Pair<String?, String>, List<JsonObject>>(CorsMechanics) { (time: String?, id: String?) ->
+            val game = httpClient.get("https://api.blaseball.com/database/gameById/$id").body<JsonObject>()
+            GAME_STATSHEETS_BY_STAT_ID.await(time, game.getString("statsheet"))
         }
 
     val TEAM_STATSHEETS_BY_STAT_ID = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildCoroutines<Pair<String?, String>, List<JsonObject>> { (time, id) ->
+        .buildLoadingKotlin<Pair<String?, String>, List<JsonObject>>(CorsMechanics) { (time, id) ->
             val teamStatsheets =
                 if (time == null) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/teamStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/teamStatsheets") {
                         parameter("ids", id)
-                    }
+                    }.body<List<JsonObject>>()
                 } else {
                     httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "teamstatsheet", time) {
                         parameter("id", id)
                     }.ifEmpty {
-                        httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/teamStatsheets") {
+                        httpClient.get("https://api.blaseball.com/database/teamStatsheets") {
                             parameter("ids", id)
-                        }
+                        }.body<List<JsonObject>>()
                     }
                 }
 
-            val playerStatsheetIDs = teamStatsheets.flatMap { it.getJsonArray("playerStats") }.mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+            val playerStatsheetIDs = teamStatsheets.flatMap { it.getJsonArray("playerStats") }
+                .mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
             val playerStatsheets = if (playerStatsheetIDs.isNotEmpty()) {
                 if (time == null) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/playerStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/playerStatsheets") {
                         parameter("ids", playerStatsheetIDs.joinToString(","))
-                    }.associateByTo(HashMap()) { it.getString("id") }
+                    }.body<List<JsonObject>>().associateByTo(HashMap()) { it.getString("id") }
                 } else {
                     httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "playerstatsheet", time) {
                         parameter("id", playerStatsheetIDs.joinToString(","))
@@ -695,15 +764,15 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
             playerStatsheetIDs.filterNot(playerStatsheets::containsKey).let { missing ->
                 if (missing.isNotEmpty()) {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/playerStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/playerStatsheets") {
                         parameter("ids", missing.joinToString(","))
-                    }.forEach { statsheet ->
+                    }.body<List<JsonObject>>().forEach { statsheet ->
                         playerStatsheets[statsheet.getString("id")] = statsheet
                     }
                 }
             }
 
-            return@buildCoroutines teamStatsheets.map { teamStatsheet ->
+            return@buildLoadingKotlin teamStatsheets.map { teamStatsheet ->
                 buildJsonObject {
                     teamStatsheet.forEach { (k, v) ->
                         when (k) {
@@ -718,6 +787,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
                                 }
                                 put("playerStatIDs", v)
                             }
+
                             else -> put(k, v)
                         }
                     }
@@ -727,22 +797,23 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val SEASON_STATSHEETS_BY_STAT_ID = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildCoroutines<Pair<String?, String>, List<JsonObject>> { (time, id) ->
+        .buildLoadingKotlin<Pair<String?, String>, List<JsonObject>>(CorsMechanics) { (time, id) ->
             val seasonStatsheets = if (time == null) {
-                httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/seasonStatsheets") {
+                httpClient.get("https://api.blaseball.com/database/seasonStatsheets") {
                     parameter("ids", id)
-                }
+                }.body<List<JsonObject>>()
             } else {
                 httpClient.chroniclerEntityList<JsonObject>(chroniclerHost, "seasonstatsheet", time) {
                     parameter("id", id)
                 }.ifEmpty {
-                    httpClient.get<List<JsonObject>>("https://api.blaseball.com/database/seasonStatsheets") {
+                    httpClient.get("https://api.blaseball.com/database/seasonStatsheets") {
                         parameter("ids", id)
-                    }
+                    }.body<List<JsonObject>>()
                 }
             }
 
-            val teamStatsheetIDs = seasonStatsheets.flatMap { it.getJsonArray("teamStats") }.mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+            val teamStatsheetIDs = seasonStatsheets.flatMap { it.getJsonArray("teamStats") }
+                .mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
             val teamStatsheets = buildJsonArray {
                 teamStatsheetIDs.map { teamStatsheetID ->
                     launch {
@@ -753,7 +824,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
                 }.joinAll()
             }
 
-            return@buildCoroutines seasonStatsheets.map { seasonStatsheet ->
+            return@buildLoadingKotlin seasonStatsheets.map { seasonStatsheet ->
                 buildJsonObject {
                     seasonStatsheet.forEach { (k, v) ->
                         when (k) {
@@ -761,6 +832,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
                                 put("teamStats", teamStatsheets)
                                 put("teamStatIDs", v)
                             }
+
                             else -> put(k, v)
                         }
                     }
@@ -770,10 +842,11 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val SEASON_BY_TIME = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, JsonObject> { time ->
-            val time = if (time == "NOW") Clock.System.now().toString() else time
-            val seasonDataDeferred = async { httpClient.chroniclerEntityMostRecent<JsonObject>(chroniclerHost, "season", at = time) }
-            val leagues = LEAGUE_TEAMS[time].asDeferred()
+        .buildLoadingKotlin<String, JsonObject>(CorsMechanics) { time ->
+            val time = if (time == "NOW") ClockKt.System.now().toString() else time
+            val seasonDataDeferred =
+                async { httpClient.chroniclerEntityMostRecent<JsonObject>(chroniclerHost, "season", at = time) }
+            val leagues = LEAGUE_TEAMS[time]
 
             val seasonData = seasonDataDeferred.await()
 
@@ -783,23 +856,26 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
                 }
             }
 
-            val stats = SEASON_STATSHEETS_BY_STAT_ID[Pair(time, seasonData.getString("stats"))].asDeferred()
+            val stats = SEASON_STATSHEETS_BY_STAT_ID[Pair(time, seasonData.getString("stats"))]
 
-            return@buildCoroutines buildJsonObject {
+            return@buildLoadingKotlin buildJsonObject {
                 seasonData.forEach { (k, v) ->
                     when (k) {
                         "league" -> {
                             put("league", leagues.await().firstOrNull { it["id"] == v } ?: JsonNull)
                             put("leagueID", v)
                         }
+
                         "standings" -> {
                             put("standings", standings.await())
                             put("standingsID", v)
                         }
+
                         "stats" -> {
                             put("stats", stats.await().firstOrNull { it["id"] == v } ?: JsonNull)
                             put("statsID", v)
                         }
+
                         else -> put(k, v)
                     }
                 }
@@ -808,13 +884,14 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val SEASON_QUERY_BY_NUMBER = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<Int, String> { season ->
-            SEASON_STREAM_QUERY_TIMES.getOrNull(season)?.let { return@buildCoroutines it }
+        .buildLoadingKotlin<Int, String>(CorsMechanics) { season ->
+            SEASON_STREAM_QUERY_TIMES.getOrNull(season)?.let { return@buildLoadingKotlin it }
 
             //So there's no direct way to get this
             //TODO: Build an endpoint for it
             //But, we can hack around it by calling *eventually* and getting the first event of a season
-            return@buildCoroutines httpClient.get<List<JsonObject>>("https://api.sibr.dev/eventually/v2/events?limit=1&season_min=${season - 1}&season_max=${season + 1}")
+            return@buildLoadingKotlin httpClient.get("https://api.sibr.dev/eventually/v2/events?limit=1&season_min=${season - 1}&season_max=${season + 1}")
+                .body<List<JsonObject>>()
                 .first()
                 .getString("created")
                 .toInstant()
@@ -822,38 +899,46 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
         }
     val SEASON_BY_NUMBER = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, JsonObject> { season ->
+        .buildLoadingKotlin<String, JsonObject>(CorsMechanics) { season ->
             try {
-                val seasonData = httpClient.get<JsonObject>("https://api.blaseball.com/database/season") {
+                val seasonData = httpClient.get("https://api.blaseball.com/database/season") {
                     parameter("number", season)
-                }
+                }.body<JsonObject>()
 
-                val leagues = LEAGUE_TEAMS[SEASON_QUERY_BY_NUMBER[seasonData.getJsonPrimitive("seasonNumber").int].await()].asDeferred()
+                val leagues =
+                    LEAGUE_TEAMS[SEASON_QUERY_BY_NUMBER[seasonData.getJsonPrimitive("seasonNumber").int].await()]
 
                 val standings = async {
-                    httpClient.chroniclerEntityMostRecent<JsonObject>(chroniclerHost, "standings", at = Clock.System.now().toString()) {
+                    httpClient.chroniclerEntityMostRecent<JsonObject>(
+                        chroniclerHost,
+                        "standings",
+                        at = ClockKt.System.now().toString()
+                    ) {
                         parameter("id", seasonData.getString("standings"))
                     }
                 }
 
-                val stats = SEASON_STATSHEETS_BY_STAT_ID[Pair(null, seasonData.getString("stats"))].asDeferred()
+                val stats = SEASON_STATSHEETS_BY_STAT_ID[Pair(null, seasonData.getString("stats"))]
 
 
-                return@buildCoroutines buildJsonObject {
+                return@buildLoadingKotlin buildJsonObject {
                     seasonData.forEach { (k, v) ->
                         when (k) {
                             "league" -> {
                                 put("league", leagues.await().firstOrNull { it["id"] == v } ?: JsonNull)
                                 put("leagueID", v)
                             }
+
                             "standings" -> {
                                 put("standings", standings.await())
                                 put("standingsID", v)
                             }
+
                             "stats" -> {
                                 put("stats", stats.await().firstOrNull { it["id"] == v } ?: JsonNull)
                                 put("statsID", v)
                             }
+
                             else -> put(k, v)
                         }
                     }
@@ -866,26 +951,26 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val SEASON_STATSHEETS_BY_SEASON = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildAsync<String, List<JsonObject>> { season, _ ->
-            SEASON_BY_NUMBER[season].thenCompose { seasonData ->
-                SEASON_STATSHEETS_BY_STAT_ID[null to seasonData.getString("statsID")]
-            }
+        .buildLoadingKotlin<String, List<JsonObject>>(CorsMechanics) { season ->
+            val seasonData = SEASON_BY_NUMBER[season].await()
+            SEASON_STATSHEETS_BY_STAT_ID[null to seasonData.getString("statsID")].await()
         }
 
     val SEASON_STATSHEETS_BY_TIME = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildAsync<String, List<JsonObject>> { time, _ ->
-            SEASON_BY_TIME[time].thenCompose { seasonData ->
-                SEASON_STATSHEETS_BY_STAT_ID[null to seasonData.getString("statsID")]
-            }
+        .buildLoadingKotlin<String, List<JsonObject>>(CorsMechanics) { time ->
+            val seasonData = SEASON_BY_NUMBER[time].await()
+            SEASON_STATSHEETS_BY_STAT_ID[null to seasonData.getString("statsID")].await()
         }
 
     val VAULT_OF_THE_RANGER = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildCoroutines<String, JsonObject> { time ->
-            val rawData = httpClient.get<JsonObject>("https://api.blaseball.com/database/vault")
+        .buildLoadingKotlin<String, JsonObject>(CorsMechanics) { time ->
+            val rawData = httpClient.get("https://api.blaseball.com/database/vault")
+                .body<JsonObject>()
 
-            val playerIDs = rawData.getJsonArray("legendaryPlayers").mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+            val playerIDs =
+                rawData.getJsonArray("legendaryPlayers").mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
             val players = PlayerRequest(playerIDs, time).request()
 
             buildJsonObjectFrom(rawData) { k, v ->
@@ -898,6 +983,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
                         false
                     }
+
                     else -> true
                 }
             }
@@ -905,8 +991,9 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
     val RISING_STARS = Caffeine.newBuilder()
         .expireAfterWrite(1, TimeUnit.MINUTES)
-        .buildCoroutines<String, JsonObject> { time ->
-            val rawData = httpClient.get<JsonObject>("https://api.blaseball.com/api/getRisingStars")
+        .buildLoadingKotlin<String, JsonObject>(CorsMechanics) { time ->
+            val rawData = httpClient.get("https://api.blaseball.com/api/getRisingStars")
+                .body<JsonObject>()
 
             val playerIDs = rawData.getJsonArray("stars").mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
             val players = PlayerRequest(playerIDs, time).request()
@@ -921,6 +1008,7 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
                         false
                     }
+
                     else -> true
                 }
             }
@@ -976,14 +1064,15 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
         }
 
         withJsonExplorer("/time/season/{season}/day/{day}") {
-            TIME_MAPS_BY_SEASON_AND_DAY[(parameters.getOrFail("season").toByte().toInt() shl 16) or (parameters.getOrFail("day").toInt())].await()
+            TIME_MAPS_BY_SEASON_AND_DAY[(parameters.getOrFail("season").toByte()
+                .toInt() shl 16) or (parameters.getOrFail("day").toInt())].await()
         }
 
         withJsonExplorer("/time/season/{season}/day/{day}/tournament/{tournament}") {
             TIME_MAPS_BY_SEASON_DAY_AND_TOURNAMENT[
-                    (parameters.getOrFail("tournament").toByte().toInt() shl 24) or
-                            (parameters.getOrFail("season").toByte().toInt() shl 16) or
-                            (parameters.getOrFail("day").toInt())
+                (parameters.getOrFail("tournament").toByte().toInt() shl 24) or
+                        (parameters.getOrFail("season").toByte().toInt() shl 16) or
+                        (parameters.getOrFail("day").toInt())
             ].await()
         }
 
@@ -1005,7 +1094,10 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
 
         if (DISABLE_EVENT_STREAM) {
             val stream = buildJsonObject {
-                this.put("_comment", "Event Stream temporarily disabled. Contact UnderMybrella#1084 if you need stream data at the moment")
+                this.put(
+                    "_comment",
+                    "Event Stream temporarily disabled. Contact UnderMybrella#1084 if you need stream data at the moment"
+                )
             }
 
             jsonExplorer("/stream") { stream }
@@ -1013,7 +1105,6 @@ fun Application.setupConvenienceRoutes(httpClient: HttpClient, dataSources: Blas
             jsonExplorer("/stream") {
                 val dataSource = dataSources sourceFor this
                 dataSource.eventStream!!.relaunchJobIfNeeded().join()
-
                 dataSource.eventStream!!.liveData.first().getJsonObject("value")
             }
         }

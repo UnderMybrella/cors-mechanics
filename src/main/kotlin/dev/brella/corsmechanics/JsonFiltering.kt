@@ -1,9 +1,7 @@
 package dev.brella.corsmechanics
 
 import com.github.benmanes.caffeine.cache.Caffeine
-import io.ktor.application.*
 import io.ktor.http.*
-import io.ktor.response.*
 import kotlinx.coroutines.future.await
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -15,8 +13,8 @@ import java.util.concurrent.TimeUnit
 val OPERATION_CACHE = Caffeine.newBuilder()
     .maximumSize(100)
     .expireAfterAccess(5, TimeUnit.MINUTES)
-    .buildCoroutines<String, JsonExplorerOperation> { op ->
-        return@buildCoroutines when {
+    .build<String, JsonExplorerOperation> { op ->
+        return@build when {
             op.contains("!=") -> {
                 val key = op.substringBefore("!=")
                 val value = op.substringAfter("!=")
@@ -104,26 +102,26 @@ val OPERATION_CACHE = Caffeine.newBuilder()
                 val key = op.substringBefore(">=")
                 val value = op.substringAfter(">=")
 
-                JsonExplorerOperation.GreaterThanOrEqual(key, value.toDoubleOrNull() ?: return@buildCoroutines JsonExplorerOperation.True)
+                JsonExplorerOperation.GreaterThanOrEqual(key, value.toDoubleOrNull() ?: return@build JsonExplorerOperation.True)
             }
             op.contains("<=") -> {
                 val key = op.substringBefore("<=")
                 val value = op.substringAfter("<=")
 
-                JsonExplorerOperation.LessThanOrEqual(key, value.toDoubleOrNull() ?: return@buildCoroutines JsonExplorerOperation.True)
+                JsonExplorerOperation.LessThanOrEqual(key, value.toDoubleOrNull() ?: return@build JsonExplorerOperation.True)
             }
 
             op.contains(">") -> {
                 val key = op.substringBefore(">")
                 val value = op.substringAfter(">")
 
-                JsonExplorerOperation.GreaterThan(key, value.toDoubleOrNull() ?: return@buildCoroutines JsonExplorerOperation.True)
+                JsonExplorerOperation.GreaterThan(key, value.toDoubleOrNull() ?: return@build JsonExplorerOperation.True)
             }
             op.contains("<") -> {
                 val key = op.substringBefore("<")
                 val value = op.substringAfter("<")
 
-                JsonExplorerOperation.LessThan(key, value.toDoubleOrNull() ?: return@buildCoroutines JsonExplorerOperation.True)
+                JsonExplorerOperation.LessThan(key, value.toDoubleOrNull() ?: return@build JsonExplorerOperation.True)
             }
 
             else -> JsonExplorerOperation.True
@@ -239,7 +237,7 @@ suspend fun JsonElement.filterByPath(jsonPath: List<String>): JsonElement? {
                                 (json as JsonArray).getOrNull(arrayIndex)
                             else return null
                     } else {
-                        val operation = OPERATION_CACHE[argument].await()
+                        val operation = OPERATION_CACHE[argument]
                         json =
                             if (json is JsonArray)
                                 (json as JsonArray).filter(operation::test)

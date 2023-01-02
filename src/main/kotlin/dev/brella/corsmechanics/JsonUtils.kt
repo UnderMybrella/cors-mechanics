@@ -1,6 +1,7 @@
 package dev.brella.corsmechanics
 
 import io.ktor.client.*
+import io.ktor.client.call.*
 import io.ktor.client.request.*
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
@@ -81,20 +82,20 @@ public suspend inline fun HttpClient.getChroniclerVersionsBefore(type: String, a
     getChroniclerVersionsBefore(type, at.toString(), builder)
 
 public suspend inline fun HttpClient.getChroniclerVersionsBefore(type: String, at: String, builder: HttpRequestBuilder.() -> Unit = {}) =
-    (get<JsonObject>("https://api.sibr.dev/chronicler/v2/versions") {
+    (get("https://api.sibr.dev/chronicler/v2/versions") {
         parameter("type", type)
         parameter("before", at)
         parameter("order", "desc")
         parameter("count", 50)
 
         builder()
-    }["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.getJsonObjectOrNull("data") }
+    }.body<JsonObject>()["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.getJsonObjectOrNull("data") }
 
 public suspend inline fun HttpClient.getChroniclerVersionsBetween(type: String, before: Instant, after: Instant, builder: HttpRequestBuilder.() -> Unit = {}) =
     getChroniclerVersionsBetween(type, before.toString(), after.toString(), builder)
 
 public suspend inline fun HttpClient.getChroniclerVersionsBetween(type: String, before: String, after: String, builder: HttpRequestBuilder.() -> Unit = {}) =
-    (get<JsonObject>("https://api.sibr.dev/chronicler/v2/versions") {
+    (get("https://api.sibr.dev/chronicler/v2/versions") {
         parameter("type", type)
         parameter("before", before)
         parameter("after", after)
@@ -102,29 +103,29 @@ public suspend inline fun HttpClient.getChroniclerVersionsBetween(type: String, 
         parameter("count", 100)
 
         builder()
-    }["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.getJsonObjectOrNull("data") }
+    }.body<JsonObject>()["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.getJsonObjectOrNull("data") }
 
 public suspend inline fun HttpClient.getChroniclerEntity(type: String, at: Instant, builder: HttpRequestBuilder.() -> Unit = {}) =
     getChroniclerEntity(type, at.toString(), builder)
 
 public suspend inline fun HttpClient.getChroniclerEntity(type: String, at: String, builder: HttpRequestBuilder.() -> Unit = {}) =
-    ((get<JsonObject>("https://api.sibr.dev/chronicler/v2/entities") {
+    ((get("https://api.sibr.dev/chronicler/v2/entities") {
         parameter("type", type)
         parameter("at", at)
 
         builder()
-    }["items"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("data")
+    }.body<JsonObject>()["items"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("data")
 
 public suspend inline fun HttpClient.getChroniclerEntityList(type: String, at: Instant, builder: HttpRequestBuilder.() -> Unit = {}) =
     getChroniclerEntityList(type, at.toString(), builder)
 
 public suspend inline fun HttpClient.getChroniclerEntityList(type: String, at: String, builder: HttpRequestBuilder.() -> Unit = {}) =
-    (get<JsonObject>("https://api.sibr.dev/chronicler/v2/entities") {
+    (get("https://api.sibr.dev/chronicler/v2/entities") {
         parameter("type", type)
         parameter("at", at)
 
         builder()
-    }["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.get("data") }
+    }.body<JsonObject>()["items"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.get("data") }
 
 @OptIn(ExperimentalTime::class)
 suspend fun <T> T.loopEvery(time: Duration, `while`: suspend T.() -> Boolean, block: suspend () -> Unit) {

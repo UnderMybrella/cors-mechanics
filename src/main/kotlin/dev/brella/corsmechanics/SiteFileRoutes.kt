@@ -3,16 +3,14 @@ package dev.brella.corsmechanics
 import com.github.benmanes.caffeine.cache.Caffeine
 import dev.brella.kornea.blaseball.base.common.beans.Colour
 import dev.brella.kornea.blaseball.base.common.beans.ColourAsHexSerialiser
-import io.ktor.application.*
 import io.ktor.client.*
 import io.ktor.client.call.*
-import io.ktor.client.features.*
-import io.ktor.client.features.json.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import io.ktor.response.*
-import io.ktor.routing.*
+import io.ktor.server.application.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.future.await
 import kotlinx.datetime.Clock
@@ -77,7 +75,7 @@ class SiteFileRoutes(val application: Application, val httpClient: HttpClient) {
     )
 
     suspend inline fun HttpClient.getCommitsFor(owner: String, repo: String, sha: String? = null, path: String? = null, author: String? = null, since: Instant? = null, until: Instant? = null, perPage: Int? = null, page: Int? = null) =
-        get<List<GitCommit>>("https://api.github.com/repos/$owner/$repo/commits") {
+        get("https://api.github.com/repos/$owner/$repo/commits") {
             sha?.let { parameter("sha", it) }
             path?.let { parameter("path", it) }
             author?.let { parameter("author", it) }
@@ -85,14 +83,14 @@ class SiteFileRoutes(val application: Application, val httpClient: HttpClient) {
             until?.let { parameter("until", it) }
             perPage?.let { parameter("per_page", it.coerceIn(1, 100)) }
             page?.let { parameter("page", it) }
-        }
+        }.body<List<GitCommit>>()
 
-    suspend inline fun <reified T> HttpClient.getJsonFromRaw(url: String, builder: HttpRequestBuilder.() -> Unit = {}): T? =
-        feature(JsonFeature)?.serializer?.read(typeInfo<T>(), get(url, builder)) as? T
+//    suspend inline fun <reified T> HttpClient.getJsonFromRaw(url: String, builder: HttpRequestBuilder.() -> Unit = {}): T? =
+//        feature(JsonFeature)?.serializer?.read(typeInfo<T>(), get(url, builder)) as? T
 
     val LATEST_COMMIT_FOR_FILE = Caffeine.newBuilder()
         .expireAfterWrite(5, TimeUnit.MINUTES)
-        .buildCoroutines<Pair<String?, String>, GitCommit> { (time, path) ->
+        .buildLoadingKotlin<Pair<String?, String>, GitCommit>(CorsMechanics) { (time, path) ->
             val time = time?.takeUnless { it == "NOW" }?.let(Instant.Companion::parse) ?: Clock.System.now()
 
             httpClient.getCommitsFor("xSke", "blaseball-site-files", path = path, until = time, perPage = 1)
@@ -101,28 +99,30 @@ class SiteFileRoutes(val application: Application, val httpClient: HttpClient) {
 
     val ATTRIBUTES_BY_TIME = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, Map<String, BlaseballAttribute>> { time ->
+        .buildLoadingKotlin<String, Map<String, BlaseballAttribute>>(CorsMechanics) { time ->
             val latestCommit = LATEST_COMMIT_FOR_FILE[time to "data/attributes.json"].await()
 
-            return@buildCoroutines httpClient.getJsonFromRaw<List<BlaseballAttribute>>("https://raw.githubusercontent.com/xSke/blaseball-site-files/${latestCommit.sha}/data/attributes.json")!!
+            return@buildLoadingKotlin httpClient.get("https://raw.githubusercontent.com/xSke/blaseball-site-files/${latestCommit.sha}/data/attributes.json")
+                .body<List<BlaseballAttribute>>()
                 .associateBy(BlaseballAttribute::id)
         }
 
     val WEATHER_BY_TIME = Caffeine.newBuilder()
         .expireAfterAccess(5, TimeUnit.MINUTES)
-        .buildCoroutines<String, Map<String, BlaseballAttribute>> { time ->
+        .buildLoadingKotlin<String, Map<String, BlaseballAttribute>>(CorsMechanics) { time ->
             val latestCommit = LATEST_COMMIT_FOR_FILE[time to "data/attributes.json"].await()
 
-            return@buildCoroutines httpClient.getJsonFromRaw<List<BlaseballAttribute>>("https://raw.githubusercontent.com/xSke/blaseball-site-files/${latestCommit.sha}/data/attributes.json")!!
+            return@buildLoadingKotlin httpClient.get("https://raw.githubusercontent.com/xSke/blaseball-site-files/${latestCommit.sha}/data/attributes.json")
+                .body<List<BlaseballAttribute>>()
                 .associateBy(BlaseballAttribute::id)
         }
 
     val FROM_SITE_BY_TIME = Caffeine.newBuilder()
         .expireAfterWrite(5, TimeUnit.MINUTES)
-        .buildCoroutines<Pair<String?, String>, ProxiedResponse> { pair ->
+        .buildLoadingKotlin<Pair<String?, String>, ProxiedResponse>(CorsMechanics) { pair ->
             val latestCommit = LATEST_COMMIT_FOR_FILE[pair].await()
 
-            return@buildCoroutines httpClient.get<HttpResponse>("https://raw.githubusercontent.com/xSke/blaseball-site-files/${latestCommit.sha}/${pair.second}")
+            return@buildLoadingKotlin httpClient.get("https://raw.githubusercontent.com/xSke/blaseball-site-files/${latestCommit.sha}/${pair.second}")
                 .proxy()
         }
 

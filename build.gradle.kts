@@ -1,20 +1,52 @@
+import dev.brella.kornea.gradle.*
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.6.0"
-    kotlin("plugin.serialization") version "1.6.0"
+    kotlin("jvm") version "1.7.20"
+    kotlin("plugin.serialization") version "1.7.20"
     id("com.github.johnrengelman.shadow") version "7.0.0"
     application
 
 //    id("com.palantir.graal") version "0.7.2"
 //    id("com.bmuschko.docker-java-application") version "7.0.0"
     id("com.bmuschko.docker-remote-api") version "7.0.0"
+    id("dev.brella.kornea") version "1.4.1"
 }
 
 group = "dev.brella"
-version = "1.4.9-EXPERIMENTAL"
+version = "1.5.0-EXPERIMENTAL"
 
 val latestTag = "latest-experimental"
+
+defineVersions {
+    ktor("2.1.2")
+    kotlinxCoroutines("1.6.4")
+    kotlinxSerialisation("1.4.0")
+
+    korneaErrors("3.1.0-alpha")
+
+    "caffeine" .. "3.1.1"
+    "logback" .. "1.4.4"
+    "jq" .. "1.3.0"
+}
+
+val buildConstants = registerBuildConstantsTask("buildConstants") {
+    setOutputInSourceSet(kotlinSourceSet(sourceSets.main))
+
+    gitCommitShortHash("GIT_COMMIT_SHORT_HASH")
+    gitCommitHash("GIT_COMMIT_LONG_HASH")
+    gitBranch("GIT_BRANCH")
+    gitCommitMessage("GIT_COMMIT_MESSAGE")
+    gradleVersion("GRADLE_VERSION")
+    gradleGroup("GRADLE_GROUP")
+    gradleName("GRADLE_NAME")
+    gradleDisplayName("GRADLE_DISPLAY_NAME")
+    gradleDescription("GRADLE_DESCRIPTION")
+    buildTimeEpoch("BUILD_TIME_EPOCH")
+    buildTimeUtcEpoch("BUILD_TIME_UTC_EPOCH")
+
+    add("TAG", latestTag)
+}
 
 repositories {
     mavenCentral()
@@ -24,44 +56,49 @@ repositories {
 dependencies {
     testImplementation(kotlin("test-junit"))
 
-    val ktor_version = "1.6.7"
+    ktorModules {
+        serverModules {
+            implementation(netty())
+            implementation(compression())
+            implementation(contentNegotiation())
+            implementation(cors())
+            implementation(conditionalHeaders())
+            implementation(statusPages())
+            implementation(doubleReceive())
+            implementation(callId())
+            implementation(callLogging())
+        }
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.3.1")
+        clientModules {
+            implementation(cio())
+            implementation(encoding())
+            implementation(contentNegotiation())
+        }
 
-    implementation("io.ktor:ktor-server-netty:$ktor_version")
-    implementation("io.ktor:ktor-serialization:$ktor_version") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+        implementation(serialisationKotlinxJson())
+//        implementation(serialisationKotlinxCbor())
+//        implementation(serialisationKotlinxXml())
     }
-    implementation("io.ktor:ktor-websockets:$ktor_version")
 
-    implementation("io.ktor:ktor-client-cio:$ktor_version")
-    implementation("io.ktor:ktor-client-encoding:$ktor_version")
-    implementation("io.ktor:ktor-client-core-jvm:$ktor_version")
-    implementation("io.ktor:ktor-client-serialization:$ktor_version") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    kotlinxCoroutinesModules {
+        implementation(core())
+        implementation(jdk8())
     }
-    implementation("io.ktor:ktor-client-encoding:$ktor_version")
 
-    implementation("dev.brella:kotlinx-serialisation-kvon:1.1.0") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    kotlinxSerialisationModules {
+        implementation(core())
     }
-    implementation("dev.brella:ktor-client-kvon:1.0.0") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
-    }
-    implementation("dev.brella:kornea-errors:2.2.0-alpha")
-    implementation("dev.brella:ktornea-utils:1.3.3-alpha")
 
-    implementation("com.github.ben-manes.caffeine:caffeine:3.0.4")
-    implementation("ch.qos.logback:logback-classic:1.2.7")
+    implementation(korneaErrorsModule())
+    implementation("dev.brella:ktornea-client-results:1.2.0-alpha")
+    implementation("com.sksamuel.aedile:aedile-core:1.1.2")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.5.2")
+    implementation(versioned("com.github.ben-manes.caffeine", "caffeine"))
+    implementation(versioned("ch.qos.logback:logback-classic", "logback"))
 
-    implementation("com.arakelian:java-jq:1.2.0")
+//    implementation("dev.brella:ktornea-utils:1.3.3-alpha")
+
+    implementation(versioned("com.arakelian:java-jq", "jq"))
 
     implementation("dev.brella:kornea-blaseball-base:2.3.5-alpha")
     implementation("dev.brella:kornea-blaseball-api:2.3.1-alpha") {
@@ -74,6 +111,7 @@ tasks.test {
 }
 
 tasks.withType<KotlinCompile>() {
+    dependsOn(buildConstants)
     kotlinOptions.jvmTarget = "11"
 }
 

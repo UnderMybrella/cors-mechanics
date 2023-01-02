@@ -1,13 +1,12 @@
 package dev.brella.corsmechanics
 
-import dev.brella.ktornea.common.installGranularHttp
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
-import io.ktor.client.features.*
-import io.ktor.client.features.compression.*
-import io.ktor.client.features.json.*
-import io.ktor.client.features.json.serializer.*
+import io.ktor.client.plugins.*
+import io.ktor.client.plugins.compression.*
+import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
@@ -309,7 +308,7 @@ object JsonPatch {
 
     @OptIn(ExperimentalTime::class)
     @JvmStatic
-    fun main(args: Array<String>) = runBlocking {
+    fun main(args: Array<String>): Unit = runBlocking {
         println("Testing JsonPath")
         val start = Instant.parse("2021-11-12T00:00:00Z")
         val now = TimeSource.Monotonic.markNow()
@@ -318,16 +317,14 @@ object JsonPatch {
             "CHRONICLER",
             Json,
             HttpClient(CIO) {
-                installGranularHttp()
-
                 install(ContentEncoding) {
                     gzip()
                     deflate()
                     identity()
                 }
 
-                install(JsonFeature) {
-                    serializer = KotlinxSerializer(json)
+                install(ContentNegotiation) {
+                    json(Serialisation.json)
                 }
 
                 install(HttpTimeout) {

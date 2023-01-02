@@ -1,23 +1,28 @@
 package dev.brella.corsmechanics
 
 import com.github.benmanes.caffeine.cache.Caffeine
-import io.ktor.application.*
+import dev.brella.kornea.errors.common.KorneaResult
+import dev.brella.kornea.errors.common.map
+import dev.brella.ktornea.results.getResult
 import io.ktor.client.*
-import io.ktor.client.features.*
+import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.request.*
+import io.ktor.server.application.*
+import io.ktor.server.request.*
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.future.future
-import kotlinx.datetime.Clock
+import kotlinx.datetime.Clock as ClockKt
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.minus
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import java.time.Clock
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
@@ -37,84 +42,102 @@ sealed class BlaseballDataSource {
             else EventStream.FromEventSource("Live", json, http, scope)
         }
 
-        override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
-            scope.future {
-                http.get<HttpResponse>("https://api.blaseball.com/${proxyRequest.path}") {
-                    if (proxyPassHost != null) header("Host", proxyPassHost)
-                    if (passCookies) proxyRequest.cookies.forEach { cookie ->
-                        cookie(
-                            name = cookie.name,
-                            value = cookie.value,
-                            maxAge = cookie.maxAge,
-                            expires = cookie.expires,
-                            domain = cookie.domain,
-                            path = cookie.path,
-                            secure = cookie.secure,
-                            httpOnly = cookie.httpOnly,
-                            extensions = cookie.extensions
-                        )
-                    }
-                }.let { ProxiedResponse.proxyFrom(it, true) }
-            }
+        override suspend fun buildRequest(
+            proxyRequest: ProxyRequest,
+            proxyPassHost: String?,
+            passCookies: Boolean,
+        ): KorneaResult<ProxiedResponse> =
+            http.getResult("https://api.blaseball.com/${proxyRequest.path}") {
+                if (proxyPassHost != null) header("Host", proxyPassHost)
+                if (passCookies) proxyRequest.cookies.forEach { cookie ->
+                    cookie(
+                        name = cookie.name,
+                        value = cookie.value,
+                        maxAge = cookie.maxAge,
+                        expires = cookie.expires,
+                        domain = cookie.domain,
+                        path = cookie.path,
+                        secure = cookie.secure,
+                        httpOnly = cookie.httpOnly,
+                        extensions = cookie.extensions
+                    )
+                }
+            }.map { http -> ProxiedResponse.proxyFrom(http, true) }
     }
 
-    class Blasement(val json: Json, val http: HttpClient, val scope: CoroutineScope, val instance: String) : BlaseballDataSource() {
+    class Blasement(val json: Json, val http: HttpClient, val scope: CoroutineScope, val instance: String) :
+        BlaseballDataSource() {
         override val eventStream: EventStream? by lazy {
             if (DISABLE_EVENT_STREAM) null
-            else EventStream.FromEventSource("Blasement @ $instance", json, http, scope, endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
+            else EventStream.FromEventSource(
+                "Blasement @ $instance",
+                json,
+                http,
+                scope,
+                endpoint = { url("https://blasement.brella.dev/leagues/$instance/events/streamData") })
         }
 
-        override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
-            scope.future {
-                http.get<HttpResponse>("https://blasement.brella.dev/leagues/$instance/${proxyRequest.path}") {
-                    if (proxyPassHost != null) header("Host", proxyPassHost)
-                    if (passCookies) proxyRequest.cookies.forEach { cookie ->
-                        cookie(
-                            name = cookie.name,
-                            value = cookie.value,
-                            maxAge = cookie.maxAge,
-                            expires = cookie.expires,
-                            domain = cookie.domain,
-                            path = cookie.path,
-                            secure = cookie.secure,
-                            httpOnly = cookie.httpOnly,
-                            extensions = cookie.extensions
-                        )
-                    }
-                }.let { ProxiedResponse.proxyFrom(it, true) }
-            }
+        override suspend fun buildRequest(
+            proxyRequest: ProxyRequest,
+            proxyPassHost: String?,
+            passCookies: Boolean,
+        ): KorneaResult<ProxiedResponse> =
+            http.getResult("https://blasement.brella.dev/leagues/$instance/${proxyRequest.path}") {
+                if (proxyPassHost != null) header("Host", proxyPassHost)
+                if (passCookies) proxyRequest.cookies.forEach { cookie ->
+                    cookie(
+                        name = cookie.name,
+                        value = cookie.value,
+                        maxAge = cookie.maxAge,
+                        expires = cookie.expires,
+                        domain = cookie.domain,
+                        path = cookie.path,
+                        secure = cookie.secure,
+                        httpOnly = cookie.httpOnly,
+                        extensions = cookie.extensions
+                    )
+                }
+            }.map { http -> ProxiedResponse.proxyFrom(http, true) }
     }
 
-    class Before(val json: Json, val http: HttpClient, val scope: CoroutineScope, val offset: Long) : BlaseballDataSource() {
+    class Before(val json: Json, val http: HttpClient, val scope: CoroutineScope, val offset: Long) :
+        BlaseballDataSource() {
         override val eventStream: EventStream? by lazy {
             if (DISABLE_EVENT_STREAM) null
-            else EventStream.FromChronicler("Before @ $offset", json, http, scope, time = { Clock.System.now().minus(offset, DateTimeUnit.SECOND).toString() })
+            else EventStream.FromChronicler(
+                "Before @ $offset",
+                json,
+                http,
+                scope,
+                time = { ClockKt.System.now().minus(offset, DateTimeUnit.SECOND).toString() })
         }
 
-        override fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse> =
-            scope.future {
-                http.get<HttpResponse>("https://before.sibr.dev/${proxyRequest.path}") {
-                    cookie("offset_sec", offset.toString())
-                    timeout {
-                        connectTimeoutMillis = 20_000L
-                    }
+        override suspend fun buildRequest(
+            proxyRequest: ProxyRequest,
+            proxyPassHost: String?,
+            passCookies: Boolean,
+        ): KorneaResult<ProxiedResponse> =
+            http.getResult("https://before.sibr.dev/${proxyRequest.path}") {
+                cookie("offset_sec", offset.toString())
+                timeout {
+                    connectTimeoutMillis = 20_000L
+                }
 
-                    if (proxyPassHost != null) header("Host", proxyPassHost)
-                    if (passCookies) proxyRequest.cookies.forEach { cookie ->
-                        cookie(
-                            name = cookie.name,
-                            value = cookie.value,
-                            maxAge = cookie.maxAge,
-                            expires = cookie.expires,
-                            domain = cookie.domain,
-                            path = cookie.path,
-                            secure = cookie.secure,
-                            httpOnly = cookie.httpOnly,
-                            extensions = cookie.extensions
-                        )
-                    }
-                }.let { ProxiedResponse.proxyFrom(it, true) }
-            }
+                if (proxyPassHost != null) header("Host", proxyPassHost)
+                if (passCookies) proxyRequest.cookies.forEach { cookie ->
+                    cookie(
+                        name = cookie.name,
+                        value = cookie.value,
+                        maxAge = cookie.maxAge,
+                        expires = cookie.expires,
+                        domain = cookie.domain,
+                        path = cookie.path,
+                        secure = cookie.secure,
+                        httpOnly = cookie.httpOnly,
+                        extensions = cookie.extensions
+                    )
+                }
+            }.map { http -> ProxiedResponse.proxyFrom(http, true) }
     }
 
     data class Instances(val json: Json, val http: HttpClient, val scope: CoroutineScope) {
@@ -140,15 +163,19 @@ sealed class BlaseballDataSource {
             val queryParams = call.request.queryParameters
 
             return (call.request.header("X-Blasement-Instance") ?: queryParams["blasement_instance"])
-                       ?.let(::blasement)
+                ?.let(::blasement)
 
-                   ?: (call.request.header("X-Before-Offset") ?: queryParams["before_offset"])
-                       ?.toLongOrNull()
-                       ?.let(::before)
+                ?: (call.request.header("X-Before-Offset") ?: queryParams["before_offset"])
+                    ?.toLongOrNull()
+                    ?.let(::before)
 
-                   ?: live()
+                ?: live()
         }
     }
 
-    abstract fun buildRequest(proxyRequest: ProxyRequest, executor: Executor, proxyPassHost: String?, passCookies: Boolean): CompletableFuture<ProxiedResponse>
+    abstract suspend fun buildRequest(
+        proxyRequest: ProxyRequest,
+        proxyPassHost: String?,
+        passCookies: Boolean,
+    ): KorneaResult<ProxiedResponse>
 }

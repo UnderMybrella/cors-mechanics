@@ -1,60 +1,46 @@
 package dev.brella.corsmechanics
 
-import com.github.benmanes.caffeine.cache.AsyncLoadingCache
 import com.github.benmanes.caffeine.cache.Caffeine
-import dev.brella.kotlinx.serialisation.kvon.Kvon
-import dev.brella.kotlinx.serialisation.kvon.KvonData
-import dev.brella.ktornea.common.installGranularHttp
-import io.ktor.application.*
+import dev.brella.kornea.BuildConstants
+import dev.brella.kornea.errors.common.KorneaResult
+import dev.brella.kornea.errors.common.getOrThrow
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
-import io.ktor.client.features.*
-import io.ktor.client.features.compression.*
-import io.ktor.client.features.json.*
-import io.ktor.client.features.json.serializer.*
+import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.client.utils.*
-import io.ktor.features.*
 import io.ktor.http.*
-import io.ktor.http.cio.websocket.*
-import io.ktor.request.*
-import io.ktor.response.*
-import io.ktor.routing.*
-import io.ktor.serialization.*
+import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.application.*
+import io.ktor.server.plugins.callid.*
+import io.ktor.server.plugins.callloging.*
+import io.ktor.server.plugins.conditionalheaders.*
+import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.statuspages.*
+import io.ktor.server.request.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
 import io.ktor.util.*
-import io.ktor.utils.io.core.*
-import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.future.await
-import kotlinx.coroutines.future.future
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import org.slf4j.event.Level
-import java.time.Duration
-import java.util.concurrent.CompletableFuture
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.ExperimentalTime
+import io.ktor.client.plugins.HttpTimeout.Plugin as ClientHttpTimeout
+import io.ktor.client.plugins.compression.ContentEncoding.Companion as ClientContentEncoding
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation.Plugin as ClientContentNegotiation
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation1
 
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
@@ -62,65 +48,6 @@ object CorsMechanics : CoroutineScope {
     override val coroutineContext: CoroutineContext =
         SupervisorJob() + Executors.newCachedThreadPool(NamedThreadFactory("CorsMechanics"))
             .asCoroutineDispatcher()
-}
-
-
-/**
- * Compress this element with [KvonData]
- *
- * This method checks the type of the element, then applies a deduplication strategy to it appropriately
- * - if this element is an array, each element is recursively compressed, using the previous element as a base. [baseElement] is assumed to be a starting element, if provided
- * - if this element is an object, each value is compressed against [baseElement], if provided.
- * - Otherwise, nothing happens
- */
-public fun JsonElement.compressElementWithKvon(
-    baseElement: JsonElement? = null,
-    arrayVersioning: Boolean = false
-): JsonElement {
-    return when (this) {
-        is JsonArray -> {
-            if (arrayVersioning) {
-                buildJsonArray {
-                    fold(baseElement) { previous, element ->
-                        add(element.compressElementWithKvon(previous, arrayVersioning))
-                        element
-                    }
-                }
-            } else {
-                val previous = baseElement as? JsonArray ?: return this
-
-                buildJsonArray {
-                    forEachIndexed { index, element ->
-                        add(
-                            element.compressElementWithKvon(
-                                if (index in previous.indices) previous[index] else null,
-                                arrayVersioning
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        is JsonObject -> {
-            val previous = baseElement as? JsonObject ?: return this
-
-            buildJsonObject {
-                val changedKeys = filter { (key, value) -> previous[key] != value }
-                val missingKeys = previous.keys.filterNot(::containsKey)
-
-                changedKeys.forEach { (key, value) ->
-                    put(
-                        key,
-                        value.compressElementWithKvon(previous[key], arrayVersioning)
-                    )
-                }
-                missingKeys.forEach { key -> put(key, KvonData.KVON_MISSING) }
-            }
-        }
-
-        else -> this
-    }
 }
 
 //val blaseballRequestCache = Caffeine.newBuilder()
@@ -132,19 +59,16 @@ data class ProxiedResponse(val body: Any, val status: HttpStatusCode, val header
     companion object {
         suspend inline fun proxyFrom(response: HttpResponse, passCookies: Boolean = false) =
             ProxiedResponse(
-                response.receive<Input>().readBytes(),
+                response.body<ByteArray>(),
                 response.status,
-                if (passCookies) response.headers else response.headers.filter { k, v ->
-                    !k.equals(
-                        HttpHeaders.SetCookie,
-                        true
-                    )
+                if (passCookies) response.headers else response.headers.filter { k, _ ->
+                    !k.equals(HttpHeaders.SetCookie, true)
                 })
     }
 }
 
-suspend inline fun HttpResponse.proxy(): ProxiedResponse =
-    ProxiedResponse(receive<Input>().readBytes(), status, headers)
+suspend inline fun HttpResponse.proxy(passCookies: Boolean = false): ProxiedResponse =
+    ProxiedResponse.proxyFrom(this, passCookies)
 
 val BAD_HEADERS = listOf(
     HttpHeaders.StrictTransportSecurity,
@@ -195,32 +119,25 @@ suspend inline fun ApplicationCall.respondProxied(proxiedResponse: ProxiedRespon
     else respond(proxiedResponse.status, proxiedResponse.body)
 }
 
-val json = Json {
-    ignoreUnknownKeys = true
-    encodeDefaults = true
-}
-
 val http = HttpClient(CIO) {
-    installGranularHttp()
-
-    install(ContentEncoding) {
+    install(ClientContentEncoding) {
         gzip()
         deflate()
         identity()
     }
 
-    install(JsonFeature) {
-        serializer = KotlinxSerializer(json)
+    install(ClientContentNegotiation) {
+        json(Serialisation.json)
     }
 
-    install(HttpTimeout) {
+    install(ClientHttpTimeout) {
         connectTimeoutMillis = 20_000L
     }
 
     expectSuccess = false
 
     defaultRequest {
-        userAgent("Mozilla/5.0 (X11; Linux x86_64; rv:85.0) Gecko/20100101 Firefox/85.0")
+        userAgent("CorsMechanics/${BuildConstants.GRADLE_VERSION} (+https://github.com/UnderMybrella/cors-mechanics)")
     }
 }
 
@@ -240,15 +157,15 @@ fun ApplicationCall.buildProxiedRoute(): String? {
 //    }
 
 val requestCacheBuckets: RequestCacheBuckets = ConcurrentHashMap()
-val dataSources = BlaseballDataSource.Instances(json, http, CorsMechanics)
+val dataSources = BlaseballDataSource.Instances(Serialisation.json, http, CorsMechanics)
 
 inline fun forRequest(
     source: BlaseballDataSource?,
     host: String,
     path: String,
     queryParameters: String,
-    cookies: List<Cookie>
-): CompletableFuture<ProxiedResponse>? {
+    cookies: List<Cookie>,
+): Deferred<KorneaResult<ProxiedResponse>>? {
     val (fallback, buckets) = requestCacheBuckets[host] ?: return null
     return (buckets[path] ?: fallback).get(
         ProxyRequest(
@@ -268,9 +185,8 @@ val DISABLE_EVENT_STREAM = System.getProperty("CORS_MECHANICS_DISABLE_EVENT_STRE
 
 @OptIn(ExperimentalTime::class, ExperimentalStdlibApi::class)
 fun Application.module(testing: Boolean = false) {
-    install(ContentNegotiation) {
-        json(json)
-        serialization(ContentType.parse("application/kvon"), Kvon.Default)
+    install(ServerContentNegotiation1) {
+        json(Serialisation.json)
     }
 
     install(CORS) {
@@ -279,27 +195,60 @@ fun Application.module(testing: Boolean = false) {
 
     install(ConditionalHeaders)
     install(StatusPages) {
-        exception<Throwable> { cause -> call.respond(HttpStatusCode.InternalServerError, cause.stackTraceToString()) }
+        exception<Throwable> { call, cause ->
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                cause.stackTraceToString()
+            )
+        }
 //        exception<KorneaResultException> { cause ->
 //            val result = cause.result
 //            if (result is KorneaHttpResult) call.response.header("X-Response-Source", result.response.request.url.toString())
 //            result.respondOnFailure(call)
 //        }
     }
+
+    install(CallId) {
+        header(HttpHeaders.XRequestId)
+        generate(10)
+    }
     install(CallLogging) {
         level = Level.INFO
+
+        callIdMdc("call-id")
     }
 
-    install(WebSockets) {
-        pingPeriod = Duration.ofSeconds(60) // Disabled (null) by default
-        timeout = Duration.ofSeconds(15)
-        masking = false
-    }
+//    install(WebSockets) {
+//        pingPeriod = Duration.ofSeconds(60) // Disabled (null) by default
+//        timeout = Duration.ofSeconds(15)
+//        masking = false
+//    }
 
     val config = environment.config.config("cors-mechanics")
     val proxyConfig = config.config("proxy")
 
     val globalDefaultCacheSpec = proxyConfig.propertyOrNull("default_cache")?.getString()
+
+    val healthyBody = buildJsonObject {
+        putJsonObject("git") {
+            put("commit_short_hash", BuildConstants.GIT_COMMIT_SHORT_HASH)
+            put("commit_long_hash", BuildConstants.GIT_COMMIT_LONG_HASH)
+            put("branch", BuildConstants.GIT_BRANCH)
+            put("commit_message", BuildConstants.GIT_COMMIT_MESSAGE)
+        }
+
+        putJsonObject("gradle") {
+            put("version", BuildConstants.GRADLE_VERSION)
+            put("group", BuildConstants.GRADLE_GROUP)
+            put("name", BuildConstants.GRADLE_NAME)
+            put("display_name", BuildConstants.GRADLE_DISPLAY_NAME)
+            put("description", BuildConstants.GRADLE_DESCRIPTION)
+        }
+
+        put("build_time_epoch_ms", BuildConstants.BUILD_TIME_EPOCH)
+        put("build_time_epoch", Instant.ofEpochMilli(BuildConstants.BUILD_TIME_EPOCH).toString())
+        put("tag", BuildConstants.TAG)
+    }
 
     proxyConfig.configList("hosts")
         .forEach { proxyConfig ->
@@ -314,14 +263,14 @@ fun Application.module(testing: Boolean = false) {
             val defaultCacheBuilder = (defaultCacheSpec?.let { Caffeine.from(it) } ?: Caffeine.newBuilder()
                 .expireAfterWrite(1, TimeUnit.SECONDS))
 
-            val cache: AsyncLoadingCache<ProxyRequest, ProxiedResponse> =
+            val cache: RequestCache =
                 defaultCacheBuilder
-                    .buildAsync { key, executor ->
+                    .buildLoadingKotlin(CorsMechanics) { key ->
                         if (key.source != null && proxyPass == "https://api.blaseball.com")
-                            key.source.buildRequest(key, executor, proxyPassHost, passCookies)
-                        else
-                            CorsMechanics.future {
-                                http.get<HttpResponse>("$proxyPass/${key.path}") {
+                            key.source.buildRequest(key, proxyPassHost, passCookies)
+                        else {
+                            KorneaResult.proxy(true) {
+                                http.get("$proxyPass/${key.path}") {
                                     if (proxyPassHost != null) header("Host", proxyPassHost)
                                     if (passCookies) key.cookies.forEach { cookie ->
                                         cookie(
@@ -336,8 +285,9 @@ fun Application.module(testing: Boolean = false) {
                                             extensions = cookie.extensions
                                         )
                                     }
-                                }.let { ProxiedResponse.proxyFrom(it, true) }
+                                }
                             }
+                        }
                     }
 
             val pathCaches: MutableMap<String, RequestCache> = ConcurrentHashMap()
@@ -346,22 +296,17 @@ fun Application.module(testing: Boolean = false) {
                 val (path, spec) = it.split(':', limit = 2)
 
                 pathCaches[path] = if (proxyPassHost != null) {
-                    Caffeine.from(spec)
-                        .buildAsync { key, executor ->
-                            CorsMechanics.future {
-                                http.get<HttpResponse>("$proxyPass/$key") {
-                                    header("Host", proxyPassHost)
-                                }.let { ProxiedResponse.proxyFrom(it) }
+                    Caffeine.from(spec).buildLoadingKotlin(CorsMechanics) { key ->
+                        KorneaResult.proxy {
+                            http.get("$proxyPass/$key") {
+                                header("Host", proxyPassHost)
                             }
                         }
+                    }
                 } else {
-                    Caffeine.from(spec)
-                        .buildAsync { key, executor ->
-                            CorsMechanics.future {
-                                http.get<HttpResponse>("$proxyPass/$key")
-                                    .let { ProxiedResponse.proxyFrom(it) }
-                            }
-                        }
+                    Caffeine.from(spec).buildLoadingKotlin(CorsMechanics) { key ->
+                        KorneaResult.proxy { http.get("$proxyPass/$key") }
+                    }
                 }
             }
 
@@ -372,7 +317,7 @@ fun Application.module(testing: Boolean = false) {
 
     routing {
         get("/health") {
-            call.respond(HttpStatusCode.OK, EmptyContent)
+            call.respond(HttpStatusCode.OK, healthyBody)
         }
 
         route("/{host}") {
@@ -388,7 +333,7 @@ fun Application.module(testing: Boolean = false) {
                             .getAll(HttpHeaders.Cookie)
                             ?.map(::parseServerSetCookieHeader)
                             ?: emptyList()
-                    )?.await() ?: return@get
+                    )?.await()?.getOrThrow() ?: return@get
                 )
             }
         }
@@ -401,7 +346,7 @@ fun Application.module(testing: Boolean = false) {
 }
 
 fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances) {
-    route("/events") {
+/*    route("/events") {
         if (DISABLE_EVENT_STREAM) {
             get("/streamData") {
                 call.respondText(
@@ -569,5 +514,5 @@ fun Route.blaseballEventStreamHandler(dataSources: BlaseballDataSource.Instances
                 }
             }
         }
-    }
+    }*/
 }

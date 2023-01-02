@@ -3,12 +3,11 @@ package dev.brella.corsmechanics
 import dev.brella.kornea.toolkit.coroutines.ReadWriteSemaphore
 import dev.brella.kornea.toolkit.coroutines.withReadPermit
 import dev.brella.kornea.toolkit.coroutines.withWritePermit
-import dev.brella.ktornea.common.cleanup
-import dev.brella.ktornea.common.executeStatement
 import io.ktor.client.*
 import io.ktor.client.call.*
-import io.ktor.client.features.*
+import io.ktor.client.plugins.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.*
@@ -169,25 +168,21 @@ sealed class EventStream(
 
     //            url("http://localhost:9897/blaseball/accelerated/live_bait/events/streamData")
     open suspend fun getLiveDataStream(): Flow<JsonObject> {
-        val call = http.executeStatement {
-            method = HttpMethod.Get
+        val call = http.get {
             timeout {
                 socketTimeoutMillis = 180_000L
                 connectTimeoutMillis = 30_000L
             }
             endpoint()
         }
-        if (!call.response.status.isSuccess()) return emptyFlow()
-        if (call.response.contentLength() == 0L) {
+        if (!call.status.isSuccess()) return emptyFlow()
+        if (call.contentLength() == 0L) {
             delay(20_000)
             return emptyFlow()
         }
 
         return channelFlow {
-            val content = if (call.response.headers[HttpHeaders.ContentEncoding] == "gzip")
-                call.response.receive()
-            else
-                call.response.content
+            val content = call.bodyAsChannel()
 
             var origin: MutableJsonObject? = null
 
@@ -210,7 +205,7 @@ sealed class EventStream(
                 }
             }
 
-            call.response.cleanup()
+            content.cancel()
         }
     }
 
