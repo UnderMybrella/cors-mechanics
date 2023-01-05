@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     kotlin("jvm")
     kotlin("plugin.serialization")
@@ -9,10 +10,7 @@ plugins {
 
 group = "dev.brella"
 version = "2.0.0"
-
-val ktor_version: String by rootProject
-val kotlinx_coroutines_version: String by rootProject
-val kotlinx_serialisation_version: String by rootProject
+val latestTag = "latest"
 
 repositories {
     mavenCentral()
@@ -22,33 +20,33 @@ repositories {
 dependencies {
     testImplementation(kotlin("test-junit"))
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinx_serialisation_version")
-
-    implementation("io.ktor:ktor-server-netty:$ktor_version")
-    implementation("io.ktor:ktor-serialization:$ktor_version") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
-    }
-    implementation("io.ktor:ktor-websockets:$ktor_version")
-
-    implementation("io.ktor:ktor-client-cio:$ktor_version")
-    implementation("io.ktor:ktor-client-encoding:$ktor_version")
-    implementation("io.ktor:ktor-client-core-jvm:$ktor_version")
-    implementation("io.ktor:ktor-client-serialization:$ktor_version") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
-    }
-    implementation("io.ktor:ktor-client-encoding:$ktor_version")
-
-    implementation("dev.brella:ktornea-utils:1.3.3-alpha")
-
-    implementation("com.github.ben-manes.caffeine:caffeine:3.0.1")
-    implementation("ch.qos.logback:logback-classic:1.2.3")
-
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinx_coroutines_version")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:$kotlinx_coroutines_version")
-
-    implementation("com.arakelian:java-jq:1.1.0")
+//    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinx_serialisation_version")
+//
+//    implementation("io.ktor:ktor-server-netty:$ktor_version")
+//    implementation("io.ktor:ktor-serialization:$ktor_version") {
+//        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
+//        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+//    }
+//    implementation("io.ktor:ktor-websockets:$ktor_version")
+//
+//    implementation("io.ktor:ktor-client-cio:$ktor_version")
+//    implementation("io.ktor:ktor-client-encoding:$ktor_version")
+//    implementation("io.ktor:ktor-client-core-jvm:$ktor_version")
+//    implementation("io.ktor:ktor-client-serialization:$ktor_version") {
+//        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
+//        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+//    }
+//    implementation("io.ktor:ktor-client-encoding:$ktor_version")
+//
+//    implementation("dev.brella:ktornea-utils:1.3.3-alpha")
+//
+//    implementation("com.github.ben-manes.caffeine:caffeine:3.0.1")
+//    implementation("ch.qos.logback:logback-classic:1.2.3")
+//
+//    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinx_coroutines_version")
+//    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:$kotlinx_coroutines_version")
+//
+//    implementation("com.arakelian:java-jq:1.1.0")
 }
 
 tasks.test {

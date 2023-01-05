@@ -1,4 +1,4 @@
-package dev.brella.corsmechanics
+package dev.brella.corsmechanics.common
 
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger

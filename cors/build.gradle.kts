@@ -1,4 +1,6 @@
+import dev.brella.kornea.gradle.*
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     kotlin("jvm")
     kotlin("plugin.serialization")
@@ -9,10 +11,25 @@ plugins {
 
 group = "dev.brella"
 version = "2.0.0"
+val latestTag = "latest"
 
-val ktor_version: String by rootProject
-val kotlinx_coroutines_version: String by rootProject
-val kotlinx_serialisation_version: String by rootProject
+val buildConstants = registerBuildConstantsTask("buildConstants") {
+    setOutputInSourceSet(kotlinSourceSet(sourceSets.main))
+
+    gitCommitShortHash("GIT_COMMIT_SHORT_HASH")
+    gitCommitHash("GIT_COMMIT_LONG_HASH")
+    gitBranch("GIT_BRANCH")
+    gitCommitMessage("GIT_COMMIT_MESSAGE")
+    gradleVersion("GRADLE_VERSION")
+    gradleGroup("GRADLE_GROUP")
+    gradleName("GRADLE_NAME")
+    gradleDisplayName("GRADLE_DISPLAY_NAME")
+    gradleDescription("GRADLE_DESCRIPTION")
+    buildTimeEpoch("BUILD_TIME_EPOCH")
+    buildTimeUtcEpoch("BUILD_TIME_UTC_EPOCH")
+
+    add("TAG", latestTag)
+}
 
 repositories {
     mavenCentral()
@@ -20,44 +37,52 @@ repositories {
 }
 
 dependencies {
-    testImplementation(kotlin("test-junit"))
+    ktorModules {
+        serverModules {
+            implementation(netty())
+            implementation(compression())
+            implementation(contentNegotiation())
+            implementation(cors())
+            implementation(conditionalHeaders())
+            implementation(statusPages())
+            implementation(doubleReceive())
+            implementation(callId())
+            implementation(callLogging())
+            implementation(websockets())
+        }
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinx_serialisation_version")
+        clientModules {
+            implementation(cio())
+            implementation(encoding())
+            implementation(contentNegotiation())
+            implementation(of("websockets"))
+        }
 
-    implementation("io.ktor:ktor-server-netty:$ktor_version")
-    implementation("io.ktor:ktor-serialization:$ktor_version") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+        implementation(serialisationKotlinxJson())
+//        implementation(serialisationKotlinxCbor())
+//        implementation(serialisationKotlinxXml())
     }
-    implementation("io.ktor:ktor-websockets:$ktor_version")
 
-    implementation("io.ktor:ktor-client-cio:$ktor_version")
-    implementation("io.ktor:ktor-client-encoding:$ktor_version")
-    implementation("io.ktor:ktor-client-core-jvm:$ktor_version")
-    implementation("io.ktor:ktor-client-serialization:$ktor_version") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    kotlinxCoroutinesModules {
+        implementation(core())
+        implementation(jdk8())
     }
-    implementation("io.ktor:ktor-client-encoding:$ktor_version")
 
-    implementation("dev.brella:kotlinx-serialisation-kvon:1.1.0") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
+    kotlinxSerialisationModules {
+        implementation(core())
     }
-    implementation("dev.brella:ktor-client-kvon:1.0.0") {
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-core")
-        exclude("org.jetbrains.kotlinx", "kotlinx-serialization-json")
-    }
-    implementation("dev.brella:kornea-errors:2.2.0-alpha")
-    implementation("dev.brella:ktornea-utils:1.3.3-alpha")
 
-    implementation("com.github.ben-manes.caffeine:caffeine:3.0.1")
-    implementation("ch.qos.logback:logback-classic:1.2.3")
+    implementation(project(":common"))
+    implementation(korneaErrorsModule())
+    implementation("dev.brella:ktornea-client-results:1.2.0-alpha")
+    implementation("com.sksamuel.aedile:aedile-core:1.1.2")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinx_coroutines_version")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:$kotlinx_coroutines_version")
+    implementation(versioned("com.github.ben-manes.caffeine", "caffeine"))
+    implementation(versioned("ch.qos.logback:logback-classic", "logback"))
 
-    implementation("com.arakelian:java-jq:1.1.0")
+//    implementation("dev.brella:ktornea-utils:1.3.3-alpha")
+
+    implementation(versioned("com.arakelian:java-jq", "jq"))
 }
 
 tasks.test {
@@ -66,6 +91,7 @@ tasks.test {
 
 tasks.withType<KotlinCompile>() {
     kotlinOptions.jvmTarget = "11"
+    dependsOn(buildConstants)
 }
 
 //graal {
@@ -130,5 +156,5 @@ tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImag
     dependsOn("createDockerfile")
     inputDir.set(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
 
-    images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:latest")
+    images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:$latestTag")
 }
