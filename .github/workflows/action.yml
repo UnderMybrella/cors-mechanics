@@ -33,4 +33,4 @@ jobs:
         with:
           wrapper-directory: gradpe/wrapper
           gradle-executable: gradlew
-          arguments: pushImage
+          arguments: :cors:pushImage

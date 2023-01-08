@@ -123,7 +123,7 @@ tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
 tasks.create<Dockerfile>("createDockerfile") {
     group = "docker"
 
-    destFile.set(File(rootProject.buildDir, "docker/Dockerfile"))
+    destFile.set(File(project.buildDir, "docker/Dockerfile"))
     from("azul/zulu-openjdk-alpine:11-jre")
     label(
         mapOf(
@@ -144,7 +144,7 @@ tasks.create<Sync>("syncShadowJarArchive") {
     group = "docker"
 
     dependsOn("assemble")
-    from(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFile.get().asFile, "cors.conf")
+    from(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFile.get().asFile, rootProject.file("cors.conf"))
     into(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
 }
 
