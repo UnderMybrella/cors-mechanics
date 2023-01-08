@@ -11,8 +11,8 @@ plugins {
 }
 
 group = "dev.brella"
-version = "2.0.0"
-val latestTag = "latest"
+version = "2.0.1"
+val latestTag = "latest-modular"
 
 val buildConstants = registerBuildConstantsTask("buildConstants") {
     setOutputInSourceSet(kotlinSourceSet(sourceSets.main))
@@ -136,7 +136,7 @@ tasks.create<Dockerfile>("createDockerfile") {
     defaultCommand("-cp", "/app/cors-mechanics.jar:/usr/lib/", "io.ktor.server.netty.EngineMain", "-config=/app/application.conf")
     exposePort(8786)
     runCommand("apk --update --no-cache add curl jq-dev")
-    instruction("HEALTHCHECK CMD curl -f http://localhost:8786/health || exit 1")
+    instruction("HEALTHCHECK CMD curl -f http://localhost:6060/health || exit 1")
 }
 
 

@@ -202,5 +202,9 @@ fun Application.module(testing: Boolean = false) {
         route("/{host}") {
             get("/{route...}") { CorsMechanics.handle(this) }
         }
+
+        get("/health") {
+            call.respond("Healthy!")
+        }
     }
 }
