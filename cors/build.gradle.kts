@@ -131,7 +131,7 @@ tasks.create<Dockerfile>("createDockerfile") {
         )
     )
     copyFile(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFileName.get(), "/app/cors-mechanics.jar")
-    copyFile("application.conf", "/app/application.conf")
+    copyFile("cors.conf", "/app/application.conf")
     entryPoint("java")
     defaultCommand("-cp", "/app/cors-mechanics.jar:/usr/lib/", "io.ktor.server.netty.EngineMain", "-config=/app/application.conf")
     exposePort(8786)
@@ -144,7 +144,7 @@ tasks.create<Sync>("syncShadowJarArchive") {
     group = "docker"
 
     dependsOn("assemble")
-    from(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFile.get().asFile, "application.conf")
+    from(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar").get().archiveFile.get().asFile, "cors.conf")
     into(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
 }
 
