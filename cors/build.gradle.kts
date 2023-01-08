@@ -1,5 +1,6 @@
 import dev.brella.kornea.gradle.*
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import com.bmuschko.gradle.docker.tasks.image.*
 
 plugins {
     kotlin("jvm")
@@ -119,7 +120,7 @@ tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
     mergeServiceFiles()
 }
 
-tasks.create<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile") {
+tasks.create<Dockerfile>("createDockerfile") {
     group = "docker"
 
     destFile.set(File(rootProject.buildDir, "docker/Dockerfile"))
@@ -138,6 +139,7 @@ tasks.create<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfil
     instruction("HEALTHCHECK CMD curl -f http://localhost:8786/health || exit 1")
 }
 
+
 tasks.create<Sync>("syncShadowJarArchive") {
     group = "docker"
 
@@ -150,11 +152,23 @@ tasks.named("createDockerfile") {
     dependsOn("syncShadowJarArchive")
 }
 
-tasks.create<com.bmuschko.gradle.docker.tasks.image.DockerBuildImage>("buildImage") {
+tasks.create<DockerBuildImage>("buildImage") {
     group = "docker"
 
     dependsOn("createDockerfile")
     inputDir.set(tasks.named<com.bmuschko.gradle.docker.tasks.image.Dockerfile>("createDockerfile").get().destFile.get().asFile.parentFile)
 
     images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:$latestTag")
+}
+
+tasks.create<DockerPushImage>("pushImage") {
+    group = "docker"
+
+    dependsOn("buildImage")
+    images.addAll("undermybrella/cors-mechanics:$version", "undermybrella/cors-mechanics:$latestTag")
+
+//    registryCredentials {
+//        username.set(System.getenv("DOCKERHUB_USERNAME"))
+//        password.set(System.getenv("DOCKERHUB_PASSWORD"))
+//    }
 }

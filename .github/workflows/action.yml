@@ -3,7 +3,7 @@ name: docker_push
 on:
   push:
     branches:
-      - 'master'
+      - 'modular'
 
 jobs:
   docker:
@@ -19,13 +19,6 @@ jobs:
            java-version: 11
            distribution: 'zulu'
       -
-        name: Gradle build
-        uses: eskatos/gradle-command-action@v1
-        with:
-           wrapper-directory: gradpe/wrapper
-           gradle-executable: gradlew
-           arguments: createDockerfile 
-      -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
       -
@@ -35,9 +28,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       -
-        name: Build and push
-        uses: docker/build-push-action@v2
+        name: Gradle build
+        uses: eskatos/gradle-command-action@v1
         with:
-          context: ./build/docker
-          push: true
-          tags: undermybrella/cors-mechanics:latest
+          wrapper-directory: gradpe/wrapper
+          gradle-executable: gradlew
+          arguments: pushImage

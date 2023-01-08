@@ -1,31 +1,27 @@
 package dev.brella.sibr.cors
 
-import com.github.benmanes.caffeine.cache.AsyncLoadingCache
-import com.github.benmanes.caffeine.cache.Caffeine
-import com.github.benmanes.caffeine.cache.Scheduler
-import dev.brella.corsmechanics.NamedThreadFactory
-import dev.brella.ktornea.common.installGranularHttp
-import io.ktor.application.*
+import dev.brella.corsmechanics.common.NamedThreadFactory
+import dev.brella.kornea.BuildConstants
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
-import io.ktor.client.features.*
-import io.ktor.client.features.compression.*
-import io.ktor.client.features.json.*
-import io.ktor.client.features.json.serializer.*
-import io.ktor.client.features.websocket.*
-import io.ktor.client.request.*
-import io.ktor.features.*
+import io.ktor.client.plugins.*
+import io.ktor.client.plugins.compression.*
+import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.plugins.websocket.*
 import io.ktor.http.*
-import io.ktor.http.cio.websocket.*
-import io.ktor.response.*
-import io.ktor.routing.*
-import io.ktor.serialization.*
-import io.ktor.util.*
+import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.application.*
+import io.ktor.server.plugins.callloging.*
+import io.ktor.server.plugins.conditionalheaders.*
+import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.statuspages.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
+import io.ktor.server.websocket.*
+import io.ktor.websocket.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.flow.*
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
 import java.security.NoSuchAlgorithmException
@@ -35,17 +31,19 @@ import java.security.Security
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.ExperimentalTime
 import kotlin.time.measureTime
+import io.ktor.client.plugins.compression.ContentEncoding as ClientContentEncoding
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 
-import io.ktor.client.features.websocket.WebSockets as ClientWebSockets
-import io.ktor.websocket.WebSockets as ServerWebSockets
+import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
+import io.ktor.server.websocket.WebSockets.Plugin as ServerWebSockets
 
 
-object CorsMechanics : CoroutineScope {
-    val executor = Executors.newCachedThreadPool(NamedThreadFactory("CorsMechanics"))
+object Lifestream : CoroutineScope {
+    val executor = Executors.newCachedThreadPool(NamedThreadFactory("Lifestream"))
     val coroutineDispatcher = executor.asCoroutineDispatcher()
 
     override val coroutineContext: CoroutineContext =
@@ -54,35 +52,30 @@ object CorsMechanics : CoroutineScope {
 
 val JSON = Json.Default
 val HTTP = HttpClient(CIO) {
-    installGranularHttp()
-
-    install(ContentEncoding) {
+    install(ClientContentEncoding) {
         gzip()
         deflate()
         identity()
     }
 
-    install(JsonFeature) {
-        serializer = KotlinxSerializer(JSON)
+    install(ClientContentNegotiation) {
+        json(JSON)
     }
 
     install(HttpTimeout) {
         connectTimeoutMillis = 20_000L
     }
 
-    install(ClientWebSockets)
+    install(ClientWebSockets) {
+        pingInterval = 20_000
+    }
 
     expectSuccess = false
 
     defaultRequest {
-        userAgent("CorsMechanics/Sibr")
+        userAgent("CorsMechanics/${BuildConstants.GRADLE_VERSION} (+https://github.com/UnderMybrella/cors-mechanics)")
     }
 }
-
-typealias RequestCache = AsyncLoadingCache<ProxyRequest, ProxyJob>
-typealias RequestCacheBuckets = MutableMap<String, Proxifier>
-
-val requestCacheBuckets: RequestCacheBuckets = ConcurrentHashMap()
 
 @OptIn(ExperimentalTime::class)
 fun main(args: Array<String>) {
@@ -125,7 +118,7 @@ fun main(args: Array<String>) {
     io.ktor.server.netty.EngineMain.main(args)
 }
 fun Application.module(testing: Boolean = false) {
-    install(ContentNegotiation) {
+    install(ServerContentNegotiation) {
         json(JSON)
     }
 
@@ -135,7 +128,7 @@ fun Application.module(testing: Boolean = false) {
 
     install(ConditionalHeaders)
     install(StatusPages) {
-        exception<Throwable> { cause -> call.respond(HttpStatusCode.InternalServerError, cause.stackTraceToString()) }
+        exception<Throwable> { call, cause -> call.respond(HttpStatusCode.InternalServerError, cause.stackTraceToString()) }
 //        exception<KorneaResultException> { cause ->
 //            val result = cause.result
 //            if (result is KorneaHttpResult) call.response.header("X-Response-Source", result.response.request.url.toString())
@@ -152,73 +145,29 @@ fun Application.module(testing: Boolean = false) {
         masking = false
     }
 
-    requestCacheBuckets["blaseball"] =
-        Proxifier(
-            Caffeine.newBuilder()
-                .expireAfterAccess(5, TimeUnit.SECONDS)
-                .scheduler(Scheduler.systemScheduler())
-                .executor(CorsMechanics.executor)
-                .evictionListener<ProxyRequest, ProxyJob> { _, job, _ -> job?.cancel() }
-                .buildAsync(ProxyJob::forRequest)
-        ) { request, route ->
-            if (route.startsWith("/events", true))
-                null
-            else
-                ProxyRequest(
-                    "api.blaseball.com",
-                    "https://api.blaseball.com/",
-                    route,
-                    request.queryParameters
-                        .flattenEntries()
-                        .sortedBy(Pair<String, String>::first)
-                )
-        }
-
     launch {
-        HTTP.webSocket("wss://ws-us3.pusher.com/app/ddb8c477293f80ee9c63?protocol=7&client=corsmechanics&version=7.0.3&flash=false") {
-            println("Connected!")
-
-            val incomingEvents = incoming.consumeAsFlow()
-                .filterIsInstance<Frame.Text>()
-                .map { JSON.decodeFromString<PusherEvent>(it.readText()) }
-                .shareIn(this, started = SharingStarted.Eagerly)
-
-            val outgoing = actor<PusherEvent> {
-                while (isActive) {
-                    try {
-                        val sending = JSON.encodeToString(receive())
-                        send(sending)
-                    } catch (th: Throwable) {
-                        th.printStackTrace()
-                    }
-                }
-            }
-
-            val frameJob = incomingEvents
-                .onEach { println(it) }
-                .launchIn(this)
-
-            incomingEvents.first { event -> event.isConnectionEstablished }
-
-            outgoing.send(PusherEvent.subscribe("", "sim-data"))
-            outgoing.send(PusherEvent.subscribe("", "game-feed-2da22698-70c2-4358-a8c2-dec817bd1190"))
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-26c46fd6-fafa-428c-be54-3606b0e4e74e"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-024596e9-8991-40a3-b9ce-966e42a9a383"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-ae266907-eafe-42bf-9ac1-39124badd625"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-b86c620f-a185-429c-9ee6-6d0cc6e42581"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-fe869470-e975-48af-8a7b-e1194bc922bf"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-0e60d95b-4465-437c-95bf-dc6f800c7369"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-afb062ea-7d5f-44cb-9ed4-5edc815ee6b0"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-3d5de00b-4b20-4ff5-9d2d-d3a7be1f7ec6"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-b309fe95-9e24-4613-aaef-421fee26eb5f"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-8acc8f87-88d2-43f0-8031-0e0485074bf4"}}
-            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-55efd89f-04ac-46fc-82fb-f81fa0892d2c"}}
-
-            frameJob.join()
-
-            println("Outta here")
-        }
+//        HTTP.webSocket("wss://ws-us3.pusher.com/app/ddb8c477293f80ee9c63?protocol=7&client=corsmechanics&version=7.0.3&flash=false") {
+//            println("Connected!")
+//
+////            outgoing.send(PusherEvent.subscribe("", "sim-data"))
+////            outgoing.send(PusherEvent.subscribe("", "game-feed-2da22698-70c2-4358-a8c2-dec817bd1190"))
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-26c46fd6-fafa-428c-be54-3606b0e4e74e"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-024596e9-8991-40a3-b9ce-966e42a9a383"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-ae266907-eafe-42bf-9ac1-39124badd625"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-b86c620f-a185-429c-9ee6-6d0cc6e42581"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-fe869470-e975-48af-8a7b-e1194bc922bf"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-0e60d95b-4465-437c-95bf-dc6f800c7369"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-afb062ea-7d5f-44cb-9ed4-5edc815ee6b0"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-3d5de00b-4b20-4ff5-9d2d-d3a7be1f7ec6"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-b309fe95-9e24-4613-aaef-421fee26eb5f"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-8acc8f87-88d2-43f0-8031-0e0485074bf4"}}
+//            //{"event":"pusher:subscribe","data":{"auth":"","channel":"game-feed-55efd89f-04ac-46fc-82fb-f81fa0892d2c"}}
+//
+//            frameJob.join()
+//
+//            println("Outta here")
+//        }
     }
 
     routing {
