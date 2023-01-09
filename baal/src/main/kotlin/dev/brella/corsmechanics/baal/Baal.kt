@@ -304,100 +304,11 @@ fun Application.module(testing: Boolean = false) {
 
         route("/{host}") {
             get("/{route...}") { Baal.handle(this) }
-            post("/{route...}") {
-                val host = call.parameters.getOrFail("host")
-                val route = call.parameters.getAll("route")
-                    ?.joinToString("/") ?: "/"
+            post("/{route...}") { proxy() }
+            put("/{route...}") { proxy() }
 
-                val response = HTTP.post {
-                    url("https://$host")
-                    url { path(route) }
-                    call.request.queryParameters
-                        .flattenEntries()
-                        .sortedBy(Pair<String, String>::first)
-                        .forEach { (k, v) -> url.parameters.append(k, v) }
-
-                    with(call.response.headers) {
-                        call.request.headers.forEach { name, values ->
-                            if (name.equals("Host", true)) return@forEach
-                            if (BAD_HEADERS.any { it.equals(name, true) }) return@forEach
-                            values.forEach { append(name, it, false) }
-                        }
-                    }
-
-                    header("Host", host)
-
-                    setBody(call.receiveChannel().toByteArray())
-                }
-                val body = response.bodyAsChannel().toByteArray()
-                Baal.altar.accessLog(
-                    response.request.url.host,
-                    response.request.url.encodedPath,
-                    response.request.method.value,
-                    response.contentType()?.toString() ?: "*/*",
-                    response.version.toString(),
-                    response.status.value,
-                    response.headers,
-                    body,
-                    response.responseTime.timestamp
-                )
-                val proxyResponse = Baal.transform(ProxyResponse(body, response.status, response.headers, lazy {
-                    MessageDigest.getInstance("SHA-256")
-                        .digest(body)
-                        .encodeBase64()
-                        .let { "W/\"$it\"" }
-                }))
-
-                call.respondProxied(proxyResponse)
-            }
-            put("/{route...}") {
-                val host = call.parameters.getOrFail("host")
-                val route = call.parameters.getAll("route")
-                    ?.joinToString("/") ?: "/"
-
-                val response = HTTP.put {
-                    url("https://$host")
-                    url { path(route) }
-                    call.request.queryParameters
-                        .flattenEntries()
-                        .sortedBy(Pair<String, String>::first)
-                        .forEach { (k, v) -> url.parameters.append(k, v) }
-
-                    with(call.response.headers) {
-                        call.request.headers.forEach { name, values ->
-                            if (name.equals("Host", true)) return@forEach
-                            if (BAD_HEADERS.any { it.equals(name, true) }) return@forEach
-                            values.forEach { append(name, it, false) }
-                        }
-                    }
-
-                    header("Host", host)
-
-                    setBody(call.receiveChannel().toByteArray())
-                }
-                val body = response.bodyAsChannel().toByteArray()
-
-                Baal.altar.accessLog(
-                    response.request.url.host,
-                    response.request.url.encodedPath,
-                    response.request.method.value,
-                    response.contentType()?.toString() ?: "*/*",
-                    response.version.toString(),
-                    response.status.value,
-                    response.headers,
-                    body,
-                    response.responseTime.timestamp
-                )
-
-                val proxyResponse = Baal.transform(ProxyResponse(body, response.status, response.headers, lazy {
-                    MessageDigest.getInstance("SHA-256")
-                        .digest(body)
-                        .encodeBase64()
-                        .let { "W/\"$it\"" }
-                }))
-
-                call.respondProxied(proxyResponse)
-            }
+            patch("/{route...}") { proxy() }
+            delete("/{route...}") { proxy() }
         }
 
         val healthObject = buildJsonObject {
@@ -425,6 +336,57 @@ fun Application.module(testing: Boolean = false) {
             call.respond(healthObject)
         }
     }
+}
+
+private suspend fun PipelineContext<Unit, ApplicationCall>.proxy() {
+    val host = call.parameters.getOrFail("host")
+    val route = call.parameters.getAll("route")
+        ?.joinToString("/") ?: "/"
+
+    val response = HTTP.request {
+        url("https://$host")
+        url { path(route) }
+        method = call.request.httpMethod
+
+        call.request.queryParameters
+            .flattenEntries()
+            .sortedBy(Pair<String, String>::first)
+            .forEach { (k, v) -> url.parameters.append(k, v) }
+
+        with(call.response.headers) {
+            call.request.headers.forEach { name, values ->
+                if (name.equals("Host", true)) return@forEach
+                if (dev.brella.corsmechanics.baal.BAD_HEADERS.any { it.equals(name, true) }) return@forEach
+                values.forEach { append(name, it, false) }
+            }
+        }
+
+        header("Host", host)
+
+        setBody(call.receiveChannel().toByteArray())
+    }
+    val body = response.bodyAsChannel().toByteArray()
+
+    Baal.altar.accessLog(
+        response.request.url.host,
+        response.request.url.encodedPath,
+        response.request.method.value,
+        response.contentType()?.toString() ?: "*/*",
+        response.version.toString(),
+        response.status.value,
+        response.headers,
+        body,
+        response.responseTime.timestamp
+    )
+
+    val proxyResponse = Baal.transform(ProxyResponse(body, response.status, response.headers, lazy {
+        MessageDigest.getInstance("SHA-256")
+            .digest(body)
+            .encodeBase64()
+            .let { "W/\"$it\"" }
+    }))
+
+    call.respondProxied(proxyResponse)
 }
 
 private inline fun StringBuilder.replaceBaalHost(host: String) =
