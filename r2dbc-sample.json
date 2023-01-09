@@ -1,0 +1,6 @@
+{
+  "__comment": "rename to r2dbc.json",
+  "url": "r2dbc:pool:postgresql://localhost:5432/database",
+  "user": "username",
+  "password": "password"
+}
