@@ -32,6 +32,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import org.slf4j.event.Level
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
@@ -63,17 +66,17 @@ object CorsMechanics : CoroutineScope {
         hosts.forEach { host -> requestCacheBuckets[host] = proxifier }
     }
 
-    public fun registerCacheBucket(
+    public inline fun registerCacheBucket(
         host: String,
         primaryCache: RequestCache,
-        transform: suspend (request: ApplicationRequest, path: String) -> ProxyRequest?,
-    ) = registerCacheBucket(host, Proxifier(primaryCache, transform))
+        supplier: Proxifier.Companion.() -> ProxyTransformation,
+    ) = registerCacheBucket(host, Proxifier(primaryCache, Proxifier.supplier()))
 
-    public fun registerCacheBucket(
+    public inline fun registerCacheBucket(
         vararg hosts: String,
         primaryCache: RequestCache,
-        transform: suspend (request: ApplicationRequest, path: String) -> ProxyRequest?,
-    ) = registerCacheBucket(hosts = hosts, Proxifier(primaryCache, transform))
+        supplier: Proxifier.Companion.() -> ProxyTransformation,
+    ) = registerCacheBucket(hosts = hosts, Proxifier(primaryCache, Proxifier.supplier()))
 
     public suspend fun handle(context: PipelineContext<Unit, ApplicationCall>) =
         with(context) {
@@ -152,59 +155,57 @@ fun Application.module(testing: Boolean = false) {
 
     CorsMechanics.registerCacheBucket(
         "api.blaseball.com", "blaseball",
-        primaryCache = baseCacheBuilder()
-    ) { request, route ->
-        if (route.startsWith("events/", true))
-            null
-        else
-            ProxyRequest(
-                "api.blaseball.com",
-                "https://api.blaseball.com/",
-                route,
-                request.queryParameters
-                    .flattenEntries()
-                    .sortedBy(Pair<String, String>::first)
-            )
-    }
+        primaryCache = baseCacheBuilder(),
+    ) { https("api.blaseball.com") { _, route -> !route.startsWith("events/", true) } }
 
     CorsMechanics.registerCacheBucket(
         "api2.blaseball.com", "fallball",
-        primaryCache = baseCacheBuilder()
-    ) { request, route ->
-        if (route.startsWith("events/", true))
-            null
-        else
-            ProxyRequest(
-                "api2.blaseball.com",
-                "https://api2.blaseball.com/",
-                route,
-                request.queryParameters
-                    .flattenEntries()
-                    .sortedBy(Pair<String, String>::first)
-            )
-    }
+        primaryCache = baseCacheBuilder(),
+    ) { https("api2.blaseball.com") { _, route -> !route.startsWith("events/", true) } }
 
     CorsMechanics.registerCacheBucket(
         "www.blaseball.com", "web",
-        primaryCache = baseCacheBuilder()
-    ) { request, route ->
-        ProxyRequest(
-            "www.blaseball.com",
-            "https://www.blaseball.com/",
-            route,
-            request.queryParameters
-                .flattenEntries()
-                .sortedBy(Pair<String, String>::first)
-        )
-    }
+        primaryCache = baseCacheBuilder(),
+    ) { https("www.blaseball.com") }
+
+    CorsMechanics.registerCacheBucket(
+        "blaseball-configs.s3.us-west-2.amazonaws.com", "blaseball-configs",
+        primaryCache = baseCacheBuilder(),
+    ) { https("blaseball-configs.s3.us-west-2.amazonaws.com") }
+
+    CorsMechanics.registerCacheBucket(
+        "blaseball-icons.s3.us-west-2.amazonaws.com", "blaseball-icons",
+        primaryCache = baseCacheBuilder(),
+    ) { https("blaseball-icons.s3.us-west-2.amazonaws.com") }
 
     routing {
         route("/{host}") {
             get("/{route...}") { CorsMechanics.handle(this) }
         }
 
+        val healthObject = buildJsonObject {
+            putJsonObject("git") {
+                put("commit_short_hash", BuildConstants.GIT_COMMIT_SHORT_HASH)
+                put("commit_long_hash", BuildConstants.GIT_COMMIT_LONG_HASH)
+                put("branch", BuildConstants.GIT_BRANCH)
+                put("commit_message", BuildConstants.GIT_COMMIT_MESSAGE)
+            }
+
+            putJsonObject("gradle") {
+                put("version", BuildConstants.GRADLE_VERSION)
+                put("group", BuildConstants.GRADLE_GROUP)
+                put("name", BuildConstants.GRADLE_NAME)
+                put("display_name", BuildConstants.GRADLE_DISPLAY_NAME)
+                put("description", BuildConstants.GRADLE_DESCRIPTION)
+            }
+
+            put("build_time", BuildConstants.BUILD_TIME_EPOCH)
+            put("build_time_utc", BuildConstants.BUILD_TIME_UTC_EPOCH)
+            put("tag", BuildConstants.TAG)
+        }
+
         get("/health") {
-            call.respond("Healthy!")
+            call.respond(healthObject)
         }
     }
 }
